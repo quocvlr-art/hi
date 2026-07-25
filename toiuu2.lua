@@ -308,6 +308,10 @@ local Runtime = {
 	CoinAnchorActive = false,
 	-- true khi dang tam unanchor + restore collision cho .Touched fire (0.35s).
 	WaitingForTouch = false,
+	-- Auto-detect firetouchinterest lom (ton tai nhung server khong nhan .Touched):
+	-- fail lien tiep N coin khong an -> FastClaimBroken=true, chuyen physics touch.
+	FastClaimFails = 0,
+	FastClaimBroken = false,
 	Gui = nil,
 	GuiRefs = {},
 	Logs = {},
@@ -2088,7 +2092,8 @@ end
 -- Chi duoc goi trong phase collect cua farmMoveStep (da qua gate RoundActive + con
 -- song + AutoCollect) -> khong fire o lobby / khi chet / coin da nhat.
 local function fireTouchNearbyCoins(root)
-	if not CFG.TouchNearbyCoins then
+	if not CFG.TouchNearbyCoins or Runtime.FastClaimBroken then
+		-- FastClaimBroken: firetouchinterest da xac dinh khong an -> fire cum vo ich, bo.
 		return 0
 	end
 	local touchFn = type(firetouchinterest) == "function" and firetouchinterest or nil
@@ -2386,7 +2391,11 @@ local function farmMoveStep()
 			-- cho 0.45s (cum da claim moi tick). Khong co firetouchinterest -> fallback
 			-- touchCoinAndWait (man unanchor + physics + wait, an toan cho executor yeu).
 			local hasTouchFn = type(firetouchinterest) == "function"
-			if CFG.FastClaim and CFG.TouchNearbyCoins and hasTouchFn then
+			-- FastClaimBroken: firetouchinterest co ton tai nhung server khong nhan
+			-- (executor stub) -> bo fast claim, ve physics touch (main.lua da test OK).
+			local useFast = CFG.FastClaim and CFG.TouchNearbyCoins and hasTouchFn
+				and not Runtime.FastClaimBroken
+			if useFast then
 				State.Status = "Toi coin; fast claim"
 				fastTouchCoin(target)
 			else
@@ -2396,9 +2405,21 @@ local function farmMoveStep()
 			-- Sau 0.35s: check coin da duoc nhat chua.
 			if not claimableCoinStillValid(target, os.clock()) then
 				-- Coin da mat TouchInterest = da nhat thanh cong.
+				Runtime.FastClaimFails = 0
 				setTargetCoin(nil)
 			else
 				-- Van con TouchInterest = chua nhat duoc, blacklist roi thu coin khac.
+				-- Chi tinh fail khi 5s gan day KHONG co CoinCollected nao (bang chung
+				-- server) -> tranh dem nham do replicate tre tren executor xin.
+				if useFast
+					and os.clock() - (Runtime.LastCoinCollectedAt or 0) > 5 then
+					Runtime.FastClaimFails = (Runtime.FastClaimFails or 0) + 1
+					if Runtime.FastClaimFails >= 8 then
+						Runtime.FastClaimBroken = true
+						pushLog("firetouchinterest KHONG an coin (8 lan lien tiep)"
+							.. " -> chuyen physics touch (unanchor + cham that)")
+					end
+				end
 				Runtime.CoinBlacklist[target] = os.clock() + CFG.RetryDelay
 				setTargetCoin(nil)
 			end
@@ -3441,6 +3462,9 @@ if R_CoinCollected then
 		if amount > prevAmount then
 			Runtime.TotalCoinsEarned = (Runtime.TotalCoinsEarned or 0)
 				+ (amount - prevAmount)
+			-- Bang chung claim THAT (server xac nhan) -> fast claim dang hoat dong.
+			Runtime.LastCoinCollectedAt = os.clock()
+			Runtime.FastClaimFails = 0
 		end
 		State.BagCounts[id] = amount
 		if cap then
@@ -4172,9 +4196,53 @@ local function createGui()
 	applyResponsive()
 	connect(root:GetPropertyChangedSignal("AbsoluteSize"), applyResponsive)
 
+	-- Nut HIDE/SHOW goc TRAI TREN: nam truc tiep trong gui (KHONG trong root) de khi
+	-- an root (man den) nut van con tren man hinh ma bam lai duoc.
+	local toggleBtn = Instance.new("TextButton")
+	toggleBtn.Name = "ToggleGui"
+	toggleBtn.Position = UDim2.new(0, 8, 0, 8)
+	toggleBtn.Size = UDim2.new(0, 96, 0, 32)
+	toggleBtn.BackgroundColor3 = Color3.fromRGB(40, 22, 70)
+	toggleBtn.BackgroundTransparency = 0.15
+	toggleBtn.BorderSizePixel = 0
+	toggleBtn.Font = Enum.Font.GothamBold
+	toggleBtn.TextSize = 15
+	toggleBtn.TextColor3 = Color3.fromRGB(188, 111, 255)
+	toggleBtn.Text = "🙈 HIDE"
+	toggleBtn.ZIndex = 50
+	toggleBtn.AutoButtonColor = true
+	toggleBtn.Parent = gui
+	do
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 8)
+		corner.Parent = toggleBtn
+		local stroke = Instance.new("UIStroke")
+		stroke.Color = Color3.fromRGB(140, 80, 220)
+		stroke.Thickness = 1.5
+		stroke.Transparency = 0.2
+		stroke.Parent = toggleBtn
+	end
+
 	local function setGuiVisible(visible)
 		root.Visible = visible
+		toggleBtn.Text = visible and "🙈 HIDE" or "👁 SHOW"
+		if visible then
+			-- GUI hien lai -> tat ve 3D lai theo config (tiet kiem nhu cu).
+			applyEngineSaver()
+		elseif Runtime.Render3DDisabled then
+			-- An GUI de xem game: bat lai ve 3D, khong thi chi thay man hinh trang.
+			local ok = pcall(function()
+				RunService:Set3dRenderingEnabled(true)
+			end)
+			if ok then
+				Runtime.Render3DDisabled = false
+				pushLog("An GUI -> bat lai ve 3D de xem game")
+			end
+		end
 	end
+	connect(toggleBtn.MouseButton1Click, function()
+		setGuiVisible(not root.Visible)
+	end)
 	-- CHI cho RightControl bat/tat GUI khi getgenv config bat HideShow = true.
 	connect(UserInputService.InputBegan, function(input, gameProcessed)
 		if not gameProcessed
