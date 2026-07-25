@@ -57,6 +57,11 @@ local Lighting = game:GetService("Lighting")
 local SoundService = game:GetService("SoundService")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
+-- VirtualUser: API engine Roblox chuan de chong AFK (KHONG phai logic game trong source).
+local VirtualUser = nil
+pcall(function()
+	VirtualUser = game:GetService("VirtualUser")
+end)
 
 local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then
@@ -133,7 +138,7 @@ local CFG = {
 	-- vi nhay/teleport). Bat = uu tien tween; tat = ve teleport/anchor-step o tren.
 	-- CHONG CHON: TAT tween -> ve teleport TUNG STUD (anchorStepToward + DirectTeleport=false).
 	UseTween = true,
-	TweenStudsPerSecond = 20, -- toc do tween (studs/giay); tang = nhanh hon
+	TweenStudsPerSecond = 60, -- toc do tween (studs/giay); tang = nhanh hon
 	TweenMaxTime = 3,         -- cap thoi gian 1 tween (giay), tranh tween qua dai khi coin xa
 	-- CLAIM CA CUM: chong xac nhan runtime dung BEN CANH coin la server nhan .Touched
 	-- (khong can dung chinh xac len coin). Moi tick collect se fire touch MOI coin
@@ -589,6 +594,22 @@ connect(LocalPlayer.ChildAdded, function(child)
 		installEspNameGuard(child)
 	end
 end)
+
+-- ANTI-AFK: Roblox kick sau ~20 phut khong co INPUT (chuot/phim). Di chuyen character
+-- bang CFrame KHONG reset idle timer nen van bi kick. LocalPlayer.Idled fire truoc khi
+-- kick (~20 phut) -> gia lap input bang VirtualUser de reset. Day la API engine chuan,
+-- KHONG phai remote/logic game trong source.
+if VirtualUser then
+	connect(LocalPlayer.Idled, function()
+		pcall(function()
+			VirtualUser:CaptureController()
+			VirtualUser:ClickButton2(Vector2.new())
+		end)
+		pushLog("Anti-AFK: reset idle timer (tranh kick 20p)")
+	end)
+else
+	pushLog("Anti-AFK: executor khong co VirtualUser -> co the bi kick AFK")
+end
 
 --====================================================================
 -- 3) SOURCE-CONFIRMED PATHS
