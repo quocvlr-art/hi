@@ -140,17 +140,15 @@ local CFG = {
 	UseTween = true,
 	TweenStudsPerSecond = 50, -- toc do tween (studs/giay); tang = nhanh hon
 	TweenMaxTime = 3,         -- cap thoi gian 1 tween (giay), tranh tween qua dai khi coin xa
-	-- CLAIM CA CUM: chong xac nhan runtime dung BEN CANH coin la server nhan .Touched
-	-- (khong can dung chinh xac len coin). Moi tick collect se fire touch MOI coin
-	-- claim duoc trong ban kinh TouchNearbyRadius quanh nhan vat -> lai gan 1 cum la
-	-- claim ca cum 1 luc. Gate da co trong farmMoveStep (RoundActive + con song).
+	-- CLAIM CA CUM (firetouchinterest): BAT SAN trong code. An toan vi da co auto-detect
+	-- FastClaimBroken: executor co firetouchinterest lom (server khong nhan .Touched)
+	-- -> fail 8 coin lien tiep la TU chuyen ve 100% cham that (touchCoinAndWait,
+	-- logic main.lua da test OK) cho het phien. Executor xin thi claim ca cum, nhanh.
 	TouchNearbyCoins = true,
 	TouchNearbyRadius = 0, -- studs; 0 = khong gioi han (fire het coin, coi chung server distance-check)
-	-- FAST CLAIM: khi da bat TouchNearbyCoins + co firetouchinterest, fireTouchNearbyCoins
-	-- moi tick DA claim ca cum quanh char (ke ca coin target). Nen luc "toi coin" khong
-	-- can lam lai man unanchor + wait 0.35s (kieu nhat tung coin cua main.lua) nua -> chi
-	-- fire dung coin do roi qua coin ke. Tang toc nhat ro ret. Tat = ve cach cu (an toan
-	-- cho executor KHONG co firetouchinterest -> luc do tu dong dung touchCoinAndWait).
+	-- FAST CLAIM: BAT SAN trong code (di cung TouchNearbyCoins). Executor lom da co
+	-- auto-detect FastClaimBroken keo ve cham that sau 8 coin fail -> khong can config.
+	-- Muon ep 1 acc luon cham that ngay tu dau: FastClaim = false trong getgenv config.
 	FastClaim = true,
 	FastClaimWait = 0.05, -- nhip cho server nhan .Touched khi FastClaim (giay); 0 = khong cho
 	-- UU TIEN CUM COIN: vi fire touch claim ca cum trong tam ban, nen uu tien teleport
@@ -2037,13 +2035,8 @@ local function touchCoinAndWait(coin)
 		root.Anchored = false
 	end)
 
-	-- 4) Bonus: firetouchinterest neu executor ho tro (tang ty le thanh cong).
-	local touchFn = type(firetouchinterest) == "function" and firetouchinterest or nil
-	if touchFn then
-		pcall(touchFn, root, coin, 0) -- Touch begin
-		task.wait(0.1)
-		pcall(touchFn, root, coin, 1) -- Touch end
-	end
+	-- 4) (DA BO buoc bonus firetouchinterest - chong chot 100% cham that nhu main.lua;
+	-- executor stub fire vo ich con ton 0.1s/coin.)
 
 	-- 5) Cho 0.35s de server nhan .Touched (GIONG main.lua dong 636).
 	task.wait(0.35)
