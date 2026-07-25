@@ -138,14 +138,14 @@ local CFG = {
 	-- vi nhay/teleport). Bat = uu tien tween; tat = ve teleport/anchor-step o tren.
 	-- CHONG CHON: TAT tween -> ve teleport TUNG STUD (anchorStepToward + DirectTeleport=false).
 	UseTween = true,
-	TweenStudsPerSecond = 60, -- toc do tween (studs/giay); tang = nhanh hon
+	TweenStudsPerSecond = 50, -- toc do tween (studs/giay); tang = nhanh hon
 	TweenMaxTime = 3,         -- cap thoi gian 1 tween (giay), tranh tween qua dai khi coin xa
 	-- CLAIM CA CUM: chong xac nhan runtime dung BEN CANH coin la server nhan .Touched
 	-- (khong can dung chinh xac len coin). Moi tick collect se fire touch MOI coin
 	-- claim duoc trong ban kinh TouchNearbyRadius quanh nhan vat -> lai gan 1 cum la
 	-- claim ca cum 1 luc. Gate da co trong farmMoveStep (RoundActive + con song).
 	TouchNearbyCoins = true,
-	TouchNearbyRadius = 45, -- studs; 0 = khong gioi han (fire het coin, coi chung server distance-check)
+	TouchNearbyRadius = 60, -- studs; 0 = khong gioi han (fire het coin, coi chung server distance-check)
 	-- UU TIEN CUM COIN: vi fire touch claim ca cum trong tam ban, nen uu tien teleport
 	-- toi coin ma QUANH NO co NHIEU coin (density cao) -> tới 1 phat claim nhieu coin.
 	PreferCoinClusters = true,
