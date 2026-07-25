@@ -4026,9 +4026,15 @@ addTask("AutoChangeAcc", function()
 	local option = Runtime.GodlyReported
 		and CFG.AutoSwapOptionHaveGodly
 		or CFG.AutoSwapOptionNoGodly
+	-- SwapCalled=true TRUOC khi cho -> task 10s khong ban trung lan 2 trong luc doi.
+	pushLog("DU DIEU KIEN doi acc (xong daily + het so) -> cho 60s roi call autoswap")
 	task.spawn(function()
+		task.wait(60) -- dem 60s cho server luu/on dinh truoc khi doi acc
+		if not ownsRuntime() then
+			return
+		end
 		local ok = callAutoSwap(option)
-		pushLog("Xong daily + het so mua box -> autoswap option "
+		pushLog("Het 60s cho -> autoswap option "
 			.. tostring(option) .. (ok and " (da gui)" or " (loi/khong gui)"))
 	end)
 end, function()
