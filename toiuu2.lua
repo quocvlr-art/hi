@@ -145,7 +145,7 @@ local CFG = {
 	-- claim duoc trong ban kinh TouchNearbyRadius quanh nhan vat -> lai gan 1 cum la
 	-- claim ca cum 1 luc. Gate da co trong farmMoveStep (RoundActive + con song).
 	TouchNearbyCoins = true,
-	TouchNearbyRadius = 60, -- studs; 0 = khong gioi han (fire het coin, coi chung server distance-check)
+	TouchNearbyRadius = 45, -- studs; 0 = khong gioi han (fire het coin, coi chung server distance-check)
 	-- UU TIEN CUM COIN: vi fire touch claim ca cum trong tam ban, nen uu tien teleport
 	-- toi coin ma QUANH NO co NHIEU coin (density cao) -> tới 1 phat claim nhieu coin.
 	PreferCoinClusters = true,
