@@ -146,6 +146,13 @@ local CFG = {
 	-- claim ca cum 1 luc. Gate da co trong farmMoveStep (RoundActive + con song).
 	TouchNearbyCoins = true,
 	TouchNearbyRadius = 0, -- studs; 0 = khong gioi han (fire het coin, coi chung server distance-check)
+	-- FAST CLAIM: khi da bat TouchNearbyCoins + co firetouchinterest, fireTouchNearbyCoins
+	-- moi tick DA claim ca cum quanh char (ke ca coin target). Nen luc "toi coin" khong
+	-- can lam lai man unanchor + wait 0.35s (kieu nhat tung coin cua main.lua) nua -> chi
+	-- fire dung coin do roi qua coin ke. Tang toc nhat ro ret. Tat = ve cach cu (an toan
+	-- cho executor KHONG co firetouchinterest -> luc do tu dong dung touchCoinAndWait).
+	FastClaim = true,
+	FastClaimWait = 0.05, -- nhip cho server nhan .Touched khi FastClaim (giay); 0 = khong cho
 	-- UU TIEN CUM COIN: vi fire touch claim ca cum trong tam ban, nen uu tien teleport
 	-- toi coin ma QUANH NO co NHIEU coin (density cao) -> tới 1 phat claim nhieu coin.
 	PreferCoinClusters = true,
@@ -2048,6 +2055,32 @@ local function touchCoinAndWait(coin)
 	Runtime.WaitingForTouch = false
 end
 
+-- FAST CLAIM: fireTouchNearbyCoins moi tick da claim ca cum quanh char, nen luc "toi
+-- coin" chi can fire dung coin do 1 phat (khong lam man unanchor + wait 0.35s cua
+-- touchCoinAndWait) roi qua coin ke -> nhanh hon nhieu. Giu Anchored (neu dang collect)
+-- vi firetouchinterest fire .Touched truc tiep, khong can physics va cham. CHI dung khi
+-- co firetouchinterest; khong co thi farmMoveStep tu fallback ve touchCoinAndWait.
+local function fastTouchCoin(coin)
+	local root = getRoot()
+	if not coin or not coin.Parent or not root then
+		return
+	end
+	local touchFn = type(firetouchinterest) == "function" and firetouchinterest or nil
+	if not touchFn then
+		return
+	end
+	-- Dat root trung coin de chac chan overlap (van giu Anchored neu dang collect).
+	pcall(function()
+		root.CFrame = coin.CFrame
+	end)
+	pcall(touchFn, root, coin, 0) -- bat dau cham
+	pcall(touchFn, root, coin, 1) -- ket thuc cham
+	local wait = math.clamp(tonumber(CFG.FastClaimWait) or 0.05, 0, 0.3)
+	if wait > 0 then
+		task.wait(wait)
+	end
+end
+
 -- Fire touch (firetouchinterest) MOI coin claim duoc trong ban kinh quanh nhan vat.
 -- Chong xac nhan runtime: dung BEN CANH coin la server nhan .Touched (khong can dung
 -- chinh xac len coin) -> lai gan 1 cum coin thi claim CA CUM 1 luc, nhanh hon nhat
@@ -2349,9 +2382,17 @@ local function farmMoveStep()
 		end
 		if remaining <= 0 then
 			rememberHidePoint(target.Position)
-			State.Status = "Da toi coin; dang fire touch"
-			-- Fire touch truc tiep (firetouchinterest) hoac fallback physics.
-			touchCoinAndWait(target)
+			-- FastClaim: co firetouchinterest + da bat TouchNearbyCoins -> fire nhanh, khong
+			-- cho 0.45s (cum da claim moi tick). Khong co firetouchinterest -> fallback
+			-- touchCoinAndWait (man unanchor + physics + wait, an toan cho executor yeu).
+			local hasTouchFn = type(firetouchinterest) == "function"
+			if CFG.FastClaim and CFG.TouchNearbyCoins and hasTouchFn then
+				State.Status = "Toi coin; fast claim"
+				fastTouchCoin(target)
+			else
+				State.Status = "Da toi coin; dang fire touch"
+				touchCoinAndWait(target)
+			end
 			-- Sau 0.35s: check coin da duoc nhat chua.
 			if not claimableCoinStillValid(target, os.clock()) then
 				-- Coin da mat TouchInterest = da nhat thanh cong.
