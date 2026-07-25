@@ -133,7 +133,7 @@ local CFG = {
 	-- vi nhay/teleport). Bat = uu tien tween; tat = ve teleport/anchor-step o tren.
 	-- CHONG CHON: TAT tween -> ve teleport TUNG STUD (anchorStepToward + DirectTeleport=false).
 	UseTween = true,
-	TweenStudsPerSecond = 16, -- toc do tween (studs/giay); tang = nhanh hon
+	TweenStudsPerSecond = 20, -- toc do tween (studs/giay); tang = nhanh hon
 	TweenMaxTime = 3,         -- cap thoi gian 1 tween (giay), tranh tween qua dai khi coin xa
 	-- CLAIM CA CUM: chong xac nhan runtime dung BEN CANH coin la server nhan .Touched
 	-- (khong can dung chinh xac len coin). Moi tick collect se fire touch MOI coin
