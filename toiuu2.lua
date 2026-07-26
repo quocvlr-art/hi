@@ -138,7 +138,7 @@ local CFG = {
 	-- vi nhay/teleport). Bat = uu tien tween; tat = ve teleport/anchor-step o tren.
 	-- CHONG CHON: TAT tween -> ve teleport TUNG STUD (anchorStepToward + DirectTeleport=false).
 	UseTween = true,
-	TweenStudsPerSecond = 50, -- toc do tween (studs/giay); tang = nhanh hon
+	TweenStudsPerSecond = 40, -- toc do tween (studs/giay); tang = nhanh hon
 	TweenMaxTime = 3,         -- cap thoi gian 1 tween (giay), tranh tween qua dai khi coin xa
 	-- CLAIM CA CUM (firetouchinterest): BAT SAN trong code. An toan vi da co auto-detect
 	-- FastClaimBroken: executor co firetouchinterest lom (server khong nhan .Touched)
