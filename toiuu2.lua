@@ -105,7 +105,10 @@ local CFG = {
 	HighestMinUpVectorY = 0.75,
 	HighestClearance = 2,
 	HighestRequireAnchored = true,
-	HighestInstantTeleport = true,
+	-- TAT instant PivotTo full-map (nhay 1 phat toi diem cao = vector kick thu 2 tren
+	-- emulator); di Segmented Step cap 14 studs/s an toan. May Windows muon nhanh
+	-- thi bat lai qua getgenv config.
+	HighestInstantTeleport = false,
 	HighestInstantMaxAttempts = 2,
 	HighestInstantRetrySeconds = 2,
 	HideAtHighestAfterCollect = true,
@@ -125,37 +128,26 @@ local CFG = {
 	CoinStepStuds = 20, -- CHI dung khi DirectTeleport=false (fallback nhay tung stud)
 	AnchorWhileCollecting = true, -- anchor rootPart khi collect (main.lua da test)
 	CoinScanRange = 0, -- chi nhat coin trong ban kinh nay (0 = khong gioi han), main.lua MAX_DISTANCE
-	-- CHONG CHON: quay ve teleport TUNG STUD (segmented CoinStepStuds) NHUNG van bat
-	-- TouchNearbyCoins de vua di vua ban firetouchinterest claim ca cum.
-	--   false = nhay tung buoc CoinStepStuds (mac dinh hien tai).
+	-- CHONG CHON: quay ve teleport TUNG STUD (segmented CoinStepStuds) khi tat tween.
+	--   false = nhay tung buoc CoinStepStuds (fallback).
 	--   true  = TP thang 1 phat toi coin gan nhat (khong nhay tung stud).
 	DirectTeleport = false,
 	-- Chot an toan cho cu nhay dau tien / khi coin gan nhat lo qua xa: > gia tri nay
 	-- thi chi nhay 1 buoc DirectMaxStuds (van la 1 buoc, khong lien tuc tung stud nho).
 	-- 0 = luon TP thang 1 phat bat ke xa (dung y "tp 1 phat an luon").
 	DirectMaxStuds = 0,
-	-- THU METHOD TWEEN: di chuyen toi coin bang TweenService (muot, di lien tuc thay
-	-- vi nhay/teleport). Bat = uu tien tween; tat = ve teleport/anchor-step o tren.
-	-- CHONG CHON: TAT tween -> ve teleport TUNG STUD (anchorStepToward + DirectTeleport=false).
+	-- TWEEN XICH DOAN NGAN (chong kick tren emulator FPS thap): van la TweenService
+	-- that, nhung cat quang duong thanh CHUOI tween nho <= TweenSegmentStuds noi nhau
+	-- qua Completed. TweenService noi suy theo THOI GIAN THUC nen 1 frame lag dai
+	-- (emulator spike 15fps -> 2fps) se "tua" vi tri het phan con lai cua tween dang
+	-- chay — voi tween DAI @50 studs/s do la cu nhay 25-50 studs/frame -> server thay
+	-- teleport -> kick. Voi doan ngan, cu nhay toi da 1 frame = TweenSegmentStuds
+	-- (6 studs, ngang buoc binh thuong cua Windows 15fps) -> khong bao gio kick.
+	-- Toc do thuc KHONG BAO GIO vuot TweenStudsPerSecond (bug TweenMaxTime cu ep
+	-- duration lam toc do thuc x2 khi coin xa — DA BO).
 	UseTween = true,
-	TweenStudsPerSecond = 40, -- toc do tween (studs/giay); tang = nhanh hon
-	TweenMaxTime = 3,         -- cap thoi gian 1 tween (giay), tranh tween qua dai khi coin xa
-	-- CLAIM CA CUM (firetouchinterest): BAT SAN trong code. An toan vi da co auto-detect
-	-- FastClaimBroken: executor co firetouchinterest lom (server khong nhan .Touched)
-	-- -> fail 8 coin lien tiep la TU chuyen ve 100% cham that (touchCoinAndWait,
-	-- logic main.lua da test OK) cho het phien. Executor xin thi claim ca cum, nhanh.
-	TouchNearbyCoins = true,
-	TouchNearbyRadius = 0, -- studs; 0 = khong gioi han (fire het coin, coi chung server distance-check)
-	-- FAST CLAIM: BAT SAN trong code (di cung TouchNearbyCoins). Executor lom da co
-	-- auto-detect FastClaimBroken keo ve cham that sau 8 coin fail -> khong can config.
-	-- Muon ep 1 acc luon cham that ngay tu dau: FastClaim = false trong getgenv config.
-	FastClaim = true,
-	FastClaimWait = 0.05, -- nhip cho server nhan .Touched khi FastClaim (giay); 0 = khong cho
-	-- UU TIEN CUM COIN: vi fire touch claim ca cum trong tam ban, nen uu tien teleport
-	-- toi coin ma QUANH NO co NHIEU coin (density cao) -> tới 1 phat claim nhieu coin.
-	PreferCoinClusters = true,
-	ClusterRadius = 0,   -- ban kinh tinh cum; 0 = dung TouchNearbyRadius (dung tam ban)
-	ClusterBonus = 8,    -- moi coin them trong cum "dang gia" bao nhieu stud (uu tien cum vs gan)
+	TweenStudsPerSecond = 45, -- toc do tween (studs/giay); tran that su, khong bi vuot
+	TweenSegmentStuds = 6,    -- do dai 1 doan tween (studs) = cu nhay toi da khi lag spike
 	-- Noclip: khi phase collect, ep CanCollide=false cho part nhan vat de khong bi
 	-- vat can; anchor van giu khong roi. Roi collect thi tra lai CanCollide. Tat = false.
 	Noclip = true,
@@ -231,6 +223,9 @@ local CFG = {
 	AutoSwapUsername = "",      -- de trong = dung ten acc hien tai (LocalPlayer.Name)
 	AutoSwapOptionNoGodly = 1,  -- rule On-Demand cho acc KHONG godly -> folder "no godly"
 	AutoSwapOptionHaveGodly = 2,-- rule On-Demand cho acc TRUNG godly -> folder "havegodly"
+	-- Cho bao nhieu GIAY sau khi DU dieu kien (xong daily + het so) roi moi call
+	-- autoswap (de server luu/on dinh). Gan qua getgenv config duoc.
+	AutoSwapDelaySeconds = 10,
 
 	LuaHeapSoftMB = 150,
 	ForceFullGC = true,
@@ -306,10 +301,20 @@ local Runtime = {
 	CoinAnchorActive = false,
 	-- true khi dang tam unanchor + restore collision cho .Touched fire (0.35s).
 	WaitingForTouch = false,
-	-- Auto-detect firetouchinterest lom (ton tai nhung server khong nhan .Touched):
-	-- fail lien tiep N coin khong an -> FastClaimBroken=true, chuyen physics touch.
-	FastClaimFails = 0,
-	FastClaimBroken = false,
+	WaitingForTouchSince = 0,
+	-- Tween xich doan ngan: goal hien tai + token huy chuoi (tang token = chuoi cu chet).
+	TweenGoalCFrame = nil,
+	TweenToken = 0,
+	-- Dem so lan physics touch FAIL tung coin (weak key). >=3 lan -> bo coin do het round.
+	CoinFailCount = setmetatable({}, { __mode = "k" }),
+	-- Watchdog: thoi diem round bat dau / lan cuu ket gan nhat / so strike lien tiep.
+	RoundStartedAt = 0,
+	OrphanCoinSince = nil,
+	WatchdogKickAt = 0,
+	WatchdogStrikes = 0,
+	-- Throttle dem coin o phase hide/idle (countClaimableCoins nang, 0.5s/lan du).
+	LastIdleCountAt = 0,
+	LastIdleCount = 0,
 	Gui = nil,
 	GuiRefs = {},
 	Logs = {},
@@ -411,6 +416,7 @@ local State = {
 local shutdown
 local ownsRuntime
 local releaseCoinAnchor
+local cancelCoinTween -- forward: setTargetCoin (dinh nghia truoc) can huy chuoi tween
 
 local function pushLog(message)
 	local text = tostring(message)
@@ -642,7 +648,13 @@ local function gameplayRemote(name)
 	if not Gameplay or not ownsRuntime() then
 		return nil
 	end
-	local remote = Gameplay:WaitForChild(name, 5)
+	-- 20s (truoc 5s): emulator boot cham qua 5s la remote = nil -> handler
+	-- CoinsStarted/RoundStart KHONG BAO GIO duoc connect, script ngoi waiting
+	-- vinh vien ma GUI van hien binh thuong (chet im lang).
+	local remote = Gameplay:WaitForChild(name, 20)
+	if not remote then
+		pushLog("THIEU remote Gameplay." .. tostring(name) .. " sau 20s")
+	end
 	return ownsRuntime() and remote or nil
 end
 
@@ -1225,6 +1237,16 @@ local function resetRoundState(newPhase)
 	clearTable(State.HidePoints)
 	clearTable(State.HidePointKeys)
 	clearTable(Runtime.CoinBlacklist)
+	-- Round moi: coin "chai" round cu duoc thu lai, cac co watchdog/tween ve 0.
+	clearTable(Runtime.CoinFailCount)
+	Runtime.OrphanCoinSince = nil
+	Runtime.NextChooseAt = 0
+	Runtime.WatchdogStrikes = 0
+	Runtime.WatchdogKickAt = 0
+	State.NoProgressTicks = 0
+	State.SuicideStartedAt = nil
+	State.SuicideGaveUp = nil
+	State.OpeningHideDeadlineExtended = nil
 	State.Collected = 0
 	State.CoinsLeft = 0
 	State.HadCoinThisRound = false
@@ -1392,22 +1414,50 @@ local function isClaimableCoin(object)
 	if not object or not object.Parent or not object:IsA("BasePart") then
 		return false
 	end
+	-- Coin "ma": attribute Collected/Delete = coin dang bien mat (nguoi khac vua
+	-- nhat / round don) — physics touch KHONG an duoc. Ban cu khong loc o day nen
+	-- tren emulator cu tween toi coin ma, cho 0.35s, fail, blacklist, chon lai...
+	if object:GetAttribute("Collected") or object:GetAttribute("Delete") then
+		return false
+	end
 	local hasTouch = object:FindFirstChild("TouchInterest")
 		or object:FindFirstChildOfClass("TouchTransmitter")
 	if not hasTouch then
 		return false
 	end
-	return object:FindFirstChild("CoinVisual") ~= nil
+	if object:FindFirstChild("CoinVisual") == nil then
+		return false
+	end
+	-- Bag full thi server tu choi coin bag do (chi check khi da co bag full — re).
+	if next(State.FullBags) ~= nil then
+		local bagId = coinBagId(object)
+		if bagId and State.FullBags[bagId] then
+			return false
+		end
+	end
+	return true
 end
 
--- Quet cac CoinContainer (co cache 5s / khi chua co) va goi callback cho moi coin.
+-- Quet cac CoinContainer (cache + hook) va goi callback cho moi coin.
 local function forEachClaimableCoin(callback)
-	-- Container moi da co hook DescendantAdded bat ngay; quet full chi con la
-	-- fallback an toan (>=10s) thay vi moi ContainerRescanSeconds (1s lam do GUI).
-	if type(Runtime.CoinContainers) ~= "table"
-		or #Runtime.CoinContainers == 0
-		or os.clock() - (Runtime.LastContainerScan or 0)
-			>= math.max(tonumber(CFG.ContainerRescanSeconds) or 2, 10) then
+	-- Container moi da co hook DescendantAdded bat ngay; quet full workspace chi la
+	-- fallback. QUAN TRONG (fix bao scan dau round tren emulator): khi danh sach
+	-- RONG cung phai co cooldown >=1s — ban cu re-scan MOI LAN GOI khi rong, tuc
+	-- ~20 lan GetDescendants/giay luc map chua stream xong -> frame spike -> tween
+	-- nhay buoc lon -> kick. Gio: rong thi toi da 1 scan/giay (hook lo phan con lai).
+	local now = os.clock()
+	local containers = Runtime.CoinContainers
+	local needScan = type(containers) ~= "table"
+	if not needScan then
+		local sinceLast = now - (Runtime.LastContainerScan or 0)
+		if #containers == 0 then
+			needScan = sinceLast
+				>= math.max(tonumber(CFG.ContainerRescanSeconds) or 1, 1)
+		else
+			needScan = sinceLast >= 10
+		end
+	end
+	if needScan then
 		refreshCoinContainers()
 	end
 	local containers = Runtime.CoinContainers
@@ -1449,7 +1499,9 @@ local function claimableCoinStillValid(coin, now)
 	return true
 end
 
--- Chon coin claim duoc gan nhat (giu logic tranh Murderer nhu chooseCoin cu).
+-- Chon coin claim duoc gan nhat (1 PASS duy nhat — da bo cham diem cum O(n^2):
+-- physics touch nhat tung coin, cum ke ben da duoc buoc 4b cua touchCoinAndWait
+-- tu an, nen density scoring chi ton CPU tren emulator yeu ma khong them coin nao).
 local function chooseClaimableCoin()
 	local root = getRoot()
 	if not root then
@@ -1463,80 +1515,47 @@ local function chooseClaimableCoin()
 	-- de van nhat + thoat, thay vi dung yen nup (dung y chong: chon coin khac).
 	local bestSafe = nil
 	local bestSafeDanger = -1
+	local best = nil
+	local bestScore = math.huge
 	local availableCount = 0
 
-	-- PASS 1: gom moi coin claim duoc (trong range, khong blacklist) vao list de tinh cum.
-	local cands = {}
 	forEachClaimableCoin(function(coin)
 		local pos = coin.Position
 		local distance = (pos - origin).Magnitude
 		if not claimableInRange(distance) then
 			return
 		end
-		availableCount = availableCount + 1
 		local retryAt = Runtime.CoinBlacklist[coin]
 		if retryAt and retryAt > now then
 			return
 		elseif retryAt then
 			Runtime.CoinBlacklist[coin] = nil
 		end
+		-- Dem SAU blacklist: chi coin THUC SU con nhat duoc. Ban cu dem ca coin
+		-- blacklist -> CoinsLeft > 0 mai voi coin "chai", NoCoinGrace khong bao gio
+		-- kich hoat -> ca round khong ket thuc collect (ket cho rat lau).
+		availableCount = availableCount + 1
 
 		local dangerDistance = math.huge
 		if murdererPosition then
 			dangerDistance = (pos - murdererPosition).Magnitude
 		end
-		-- Ung vien du phong: coin xa murderer nhat trong so con lai.
 		if dangerDistance > bestSafeDanger then
 			bestSafeDanger = dangerDistance
 			bestSafe = coin
 		end
-		cands[#cands + 1] = {
-			coin = coin,
-			pos = pos,
-			distance = distance,
-			danger = dangerDistance,
-		}
-	end)
-
-	-- Ban kinh tinh cum = tam ban firetouchinterest (nhung coin claim CUNG 1 luc).
-	local clusterRadius = tonumber(CFG.ClusterRadius) or 0
-	if clusterRadius <= 0 then
-		clusterRadius = tonumber(CFG.TouchNearbyRadius) or 0
-	end
-	local clusterBonus = tonumber(CFG.ClusterBonus) or 0
-	-- Guard chong lag: cum chi tinh khi bat, co ban kinh/bonus, va so coin khong qua lon.
-	-- 250 (thay vi 600): tinh cum la O(n^2), 600 coin = 360k phep tinh moi lan chon
-	-- -> giat GUI; 250 van du cho map dong coin.
-	local usePrefer = CFG.PreferCoinClusters
-		and clusterRadius > 0
-		and clusterBonus > 0
-		and #cands <= 250
-
-	-- PASS 2: cham diem = gan char (distance) - thuong density (cum) + phat gan murderer.
-	local best = nil
-	local bestScore = math.huge
-	for i = 1, #cands do
-		local c = cands[i]
-		-- CHI loai coin nam sat murderer duoi MurdererHardAvoid (khong loai ca cum).
-		if c.danger >= CFG.MurdererHardAvoid then
-			local density = 1
-			if usePrefer then
-				for j = 1, #cands do
-					if j ~= i and (cands[j].pos - c.pos).Magnitude <= clusterRadius then
-						density = density + 1
-					end
-				end
-			end
-			local score = c.distance - clusterBonus * (density - 1)
-			if murdererPosition and c.danger < CFG.SafeDistance then
-				score = score + (CFG.SafeDistance - c.danger) * 2
+		-- CHI loai coin sat murderer duoi MurdererHardAvoid.
+		if dangerDistance >= CFG.MurdererHardAvoid then
+			local score = distance
+			if murdererPosition and dangerDistance < CFG.SafeDistance then
+				score = score + (CFG.SafeDistance - dangerDistance) * 2
 			end
 			if score < bestScore then
-				best = c.coin
+				best = coin
 				bestScore = score
 			end
 		end
-	end
+	end)
 
 	-- Neu khong coin nao dat nguong an toan -> lay coin xa murderer nhat (van nhat).
 	local chosen = best or bestSafe
@@ -1551,11 +1570,19 @@ local function chooseClaimableCoin()
 	return chosen, availableCount
 end
 
-local function countClaimableCoins()
+-- Dem coin claim duoc, CO CACHE 0.5s (phase hide goi moi tick 0.05s -> 20 lan
+-- quet container/giay chi de hien so — throttle tiet kiem 90% chi phi).
+local function countClaimableCoins(maxAge)
+	local now = os.clock()
+	if now - (Runtime.LastIdleCountAt or 0) < (tonumber(maxAge) or 0.5) then
+		return Runtime.LastIdleCount or 0
+	end
 	local count = 0
 	forEachClaimableCoin(function()
 		count = count + 1
 	end)
+	Runtime.LastIdleCountAt = now
+	Runtime.LastIdleCount = count
 	return count
 end
 
@@ -1605,9 +1632,17 @@ local function enoughCoins()
 end
 
 local function setTargetCoin(coin)
+	-- Doi/bo target -> huy chuoi tween cu NGAY. Truoc day tween cu van keo char ve
+	-- coin CU toi 0.35s (1 tick FarmMove) sau khi coinScanTask da doi target.
+	if cancelCoinTween and State.TargetCoin ~= coin then
+		cancelCoinTween()
+	end
 	State.TargetCoin = coin
 	State.TargetArrivedAt = nil
 	State.LastTargetDistance = nil
+	-- Dem TICK khong tien trien (thay vi giay wall-clock): emulator freeze 3-5s lam
+	-- os.clock troi nhung khong frame nao chay -> dem giay se blacklist oan coin tot.
+	State.NoProgressTicks = 0
 	State.LastTargetProgressAt = coin and os.clock() or 0
 end
 
@@ -1684,10 +1719,24 @@ local function normalizeConfig()
 	)
 	CFG.ArrivalRadius = math.clamp(tonumber(CFG.ArrivalRadius) or 5, 1, 12)
 	CFG.CoinScanDelay = math.clamp(tonumber(CFG.CoinScanDelay) or 0.25, 0.05, 2)
+	-- Min 1s: day la cooldown re-scan full workspace khi CHUA thay container
+	-- (hook DescendantAdded lo container moi; scan day du fallback 10s).
 	CFG.ContainerRescanSeconds = math.clamp(
-		tonumber(CFG.ContainerRescanSeconds) or 2,
-		0.5,
+		tonumber(CFG.ContainerRescanSeconds) or 1,
+		1,
 		30
+	)
+	-- Tween xich doan: speed la tran cung; doan cang nho cang chong kick khoe
+	-- (cu nhay toi da 1 frame lag = TweenSegmentStuds).
+	CFG.TweenStudsPerSecond = math.clamp(
+		tonumber(CFG.TweenStudsPerSecond) or 35,
+		5,
+		100
+	)
+	CFG.TweenSegmentStuds = math.clamp(
+		tonumber(CFG.TweenSegmentStuds) or 6,
+		2,
+		12
 	)
 	CFG.StuckSeconds = math.clamp(tonumber(CFG.StuckSeconds) or 3, 1, 15)
 	CFG.RetryDelay = math.clamp(tonumber(CFG.RetryDelay) or 1.5, 0.25, 10)
@@ -1904,9 +1953,11 @@ local function anchorStepToward(targetCFrame)
 	return distance - step
 end
 
--- === TWEEN METHOD (chong thu) ===
--- Huy tween coin dang chay (khi doi target / touch / roi collect / round doi).
-local function cancelCoinTween()
+-- === TWEEN XICH DOAN NGAN (van TweenService that — chong kick emulator) ===
+-- Huy chuoi tween: tang token -> moi callback/doan cua chuoi cu tu chet.
+cancelCoinTween = function()
+	Runtime.TweenToken = (Runtime.TweenToken or 0) + 1
+	Runtime.TweenGoalCFrame = nil
 	if Runtime.CoinTween then
 		pcall(function()
 			Runtime.CoinTween:Cancel()
@@ -1916,9 +1967,85 @@ local function cancelCoinTween()
 	Runtime.CoinTweenTargetPos = nil
 end
 
--- Di chuyen toi coin bang TweenService thay vi teleport tung stud.
--- Anchor rootPart (nhu anchor-step) de tween muot, physics khong danh nhau voi tween.
--- Tra ve khoang cach CON LAI (0 = da toi trong ArrivalRadius, san sang touch).
+-- Chay 1 doan tween <= TweenSegmentStuds ve phia goal; xong doan tu noi doan ke
+-- qua Completed -> nhin van la 1 duong tween lien tuc, TOC DO TONG = dung
+-- TweenStudsPerSecond. Khac tween dai o cho: frame lag dai chi "tua" het DOAN
+-- dang chay (<= 6 studs) thay vi 25-50 studs -> server khong thay teleport.
+local startTweenSegment
+startTweenSegment = function(token)
+	if not ownsRuntime() or token ~= Runtime.TweenToken then
+		return
+	end
+	local goal = Runtime.TweenGoalCFrame
+	if not goal then
+		return
+	end
+	-- Pause khi dang cham coin / sai phase / het round / chet: thu lai sau nhip ngan.
+	if Runtime.WaitingForTouch
+		or not State.RoundActive
+		or (State.Phase ~= "collect" and State.Phase ~= "suicide")
+		or not isAliveByData() then
+		task.delay(0.1, startTweenSegment, token)
+		return
+	end
+	local root = getRoot()
+	if not root then
+		task.delay(0.2, startTweenSegment, token)
+		return
+	end
+	local offset = goal.Position - root.Position
+	local distance = offset.Magnitude
+	local segLen = math.clamp(tonumber(CFG.TweenSegmentStuds) or 6, 2, 12)
+	local speed = math.clamp(tonumber(CFG.TweenStudsPerSecond) or 35, 5, 100)
+	local segGoal
+	if distance <= segLen then
+		segGoal = goal
+	else
+		segGoal = CFrame.new(root.Position + offset.Unit * segLen)
+	end
+	-- duration = doan/speed -> toc do thuc KHONG BAO GIO vuot config (bug cu:
+	-- TweenMaxTime ep duration lam coin xa chay x2 toc do -> cang de kick).
+	local duration = math.max(math.min(distance, segLen) / speed, 0.03)
+	local ok, tween = pcall(function()
+		return TweenService:Create(
+			root,
+			TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out),
+			{ CFrame = segGoal }
+		)
+	end)
+	if not ok or not tween then
+		task.delay(0.2, startTweenSegment, token)
+		return
+	end
+	Runtime.CoinTween = tween
+	local conn
+	conn = tween.Completed:Connect(function()
+		if conn then
+			pcall(function()
+				conn:Disconnect()
+			end)
+			conn = nil
+		end
+		if token == Runtime.TweenToken then
+			startTweenSegment(token)
+		end
+	end)
+	local okPlay = pcall(function()
+		tween:Play()
+	end)
+	if not okPlay then
+		if conn then
+			pcall(function()
+				conn:Disconnect()
+			end)
+			conn = nil
+		end
+		task.delay(0.2, startTweenSegment, token)
+	end
+end
+
+-- Dat goal cho chuoi tween xich doan. Tra ve khoang cach CON LAI (0 = da toi
+-- trong ArrivalRadius, san sang touch). Giu nguyen ten/chu ky goi cua ban cu.
 local function tweenStepToward(targetCFrame)
 	local root = getRoot()
 	if not root or typeof(targetCFrame) ~= "CFrame" then
@@ -1939,39 +2066,27 @@ local function tweenStepToward(targetCFrame)
 		end)
 		return 0
 	end
-
-	-- Chi tao tween moi khi: chua co tween / doi target / tween da dung (khong Playing).
-	local needNew = true
-	if Runtime.CoinTween and Runtime.CoinTweenTargetPos then
-		local sameTarget = (Runtime.CoinTweenTargetPos - targetPos).Magnitude <= 2
-		local playing = Runtime.CoinTween.PlaybackState == Enum.PlaybackState.Playing
-		if sameTarget and playing then
-			needNew = false
-		end
+	-- Goal khong doi (>2 studs) va chuoi con chay -> giu chuoi, chi cap nhat goal.
+	local prevGoal = Runtime.TweenGoalCFrame
+	local sameGoal = prevGoal
+		and (prevGoal.Position - targetPos).Magnitude <= 2
+	local chainAlive = Runtime.CoinTween
+		and Runtime.CoinTween.PlaybackState == Enum.PlaybackState.Playing
+	if sameGoal and chainAlive then
+		Runtime.TweenGoalCFrame = targetCFrame
+		return distance
 	end
-	if needNew then
-		cancelCoinTween()
-		local speed = math.max(1, tonumber(CFG.TweenStudsPerSecond) or 60)
-		local duration = math.clamp(
-			distance / speed,
-			0.05,
-			math.max(0.1, tonumber(CFG.TweenMaxTime) or 3)
-		)
-		local ok, tween = pcall(function()
-			return TweenService:Create(
-				root,
-				TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out),
-				{ CFrame = targetCFrame }
-			)
+	-- Restart chuoi voi goal moi (token moi -> chuoi/callback cu tu chet).
+	Runtime.TweenToken = (Runtime.TweenToken or 0) + 1
+	local token = Runtime.TweenToken
+	if Runtime.CoinTween then
+		pcall(function()
+			Runtime.CoinTween:Cancel()
 		end)
-		if ok and tween then
-			Runtime.CoinTween = tween
-			Runtime.CoinTweenTargetPos = targetPos
-			pcall(function()
-				tween:Play()
-			end)
-		end
+		Runtime.CoinTween = nil
 	end
+	Runtime.TweenGoalCFrame = targetCFrame
+	startTweenSegment(token)
 	return distance
 end
 
@@ -2007,9 +2122,13 @@ local function touchCoinAndWait(coin)
 		return
 	end
 
+	-- Epoch de biet round co doi giua chung wait khong (round end trong luc wait
+	-- -> KHONG duoc re-anchor, tranh treo anchor dung im o lobby).
+	local epoch = State.RoundEpoch
 	Runtime.WaitingForTouch = true
+	Runtime.WaitingForTouchSince = os.clock()
 
-	-- 0) Huy tween coin (neu dang tween toi) de khong danh nhau voi set CFrame + unanchor.
+	-- 0) Huy chuoi tween de khong danh nhau voi set CFrame + unanchor.
 	cancelCoinTween()
 
 	-- 1) Dat root CHINH XAC trung coin (dam bao overlap).
@@ -2035,15 +2154,65 @@ local function touchCoinAndWait(coin)
 		root.Anchored = false
 	end)
 
-	-- 4) (DA BO buoc bonus firetouchinterest - chong chot 100% cham that nhu main.lua;
-	-- executor stub fire vo ich con ton 0.1s/coin.)
+	-- 4) Cho server nhan .Touched: poll thoat SOM — coin mat TouchInterest la server
+	-- DA an (thuong 0.1-0.2s) -> thoat ngay, khoi cho du; tran 0.4s (main.lua 0.35s).
+	local waited = 0
+	repeat
+		task.wait(0.05)
+		waited = waited + 0.05
+	until waited >= 0.4 or not isClaimableCoin(coin)
 
-	-- 5) Cho 0.35s de server nhan .Touched (GIONG main.lua dong 636).
-	task.wait(0.35)
+	-- 4b) CHAM CA CUM BANG PHYSICS (thay vai tro fire-cum firetouchinterest cu,
+	-- khong can executor API): dang luc unanchor san, luot toi da 4 coin claim duoc
+	-- trong 8 studs quanh day — dat CFrame trung tung cai, poll ngan. 1 lan unanchor
+	-- an ca cum, do ton nguyen chu ky anchor/di chuyen/cho cho TUNG coin.
+	if State.RoundEpoch == epoch and State.RoundActive then
+		local nearby = {}
+		local hereOk, herePos = pcall(function()
+			return root.Position
+		end)
+		if hereOk and herePos then
+			forEachClaimableCoin(function(other)
+				if other ~= coin and #nearby < 4
+					and (other.Position - herePos).Magnitude <= 8 then
+					nearby[#nearby + 1] = other
+				end
+			end)
+		end
+		local extraClaimed = 0
+		for _, other in ipairs(nearby) do
+			if State.RoundEpoch ~= epoch or not State.RoundActive then
+				break
+			end
+			local r = getRoot()
+			if not r then
+				break
+			end
+			pcall(function()
+				r.CFrame = other.CFrame
+			end)
+			local w = 0
+			repeat
+				task.wait(0.05)
+				w = w + 0.05
+			until w >= 0.3 or not isClaimableCoin(other)
+			if not isClaimableCoin(other) then
+				extraClaimed = extraClaimed + 1
+			end
+		end
+		if extraClaimed > 0 then
+			pushLog("Cham cum physics: an them " .. extraClaimed .. " coin ke ben")
+		end
+	end
 
-	-- 6) Re-anchor cho coin tiep theo.
+	-- 5) Re-anchor CHI KHI van cung round + van collect/suicide. Round end giua
+	-- chung -> giu unanchor (ban cu re-anchor vo dieu kien -> treo anchor o lobby,
+	-- neu round sau miss event la dung im vinh vien).
 	root = getRoot()
-	if root and CFG.AnchorWhileCollecting then
+	if root and CFG.AnchorWhileCollecting
+		and State.RoundEpoch == epoch
+		and State.RoundActive
+		and (State.Phase == "collect" or State.Phase == "suicide") then
 		pcall(function()
 			root.Anchored = true
 		end)
@@ -2052,67 +2221,8 @@ local function touchCoinAndWait(coin)
 	Runtime.WaitingForTouch = false
 end
 
--- FAST CLAIM: fireTouchNearbyCoins moi tick da claim ca cum quanh char, nen luc "toi
--- coin" chi can fire dung coin do 1 phat (khong lam man unanchor + wait 0.35s cua
--- touchCoinAndWait) roi qua coin ke -> nhanh hon nhieu. Giu Anchored (neu dang collect)
--- vi firetouchinterest fire .Touched truc tiep, khong can physics va cham. CHI dung khi
--- co firetouchinterest; khong co thi farmMoveStep tu fallback ve touchCoinAndWait.
-local function fastTouchCoin(coin)
-	local root = getRoot()
-	if not coin or not coin.Parent or not root then
-		return
-	end
-	local touchFn = type(firetouchinterest) == "function" and firetouchinterest or nil
-	if not touchFn then
-		return
-	end
-	-- Dat root trung coin de chac chan overlap (van giu Anchored neu dang collect).
-	pcall(function()
-		root.CFrame = coin.CFrame
-	end)
-	pcall(touchFn, root, coin, 0) -- bat dau cham
-	pcall(touchFn, root, coin, 1) -- ket thuc cham
-	local wait = math.clamp(tonumber(CFG.FastClaimWait) or 0.05, 0, 0.3)
-	if wait > 0 then
-		task.wait(wait)
-	end
-end
-
--- Fire touch (firetouchinterest) MOI coin claim duoc trong ban kinh quanh nhan vat.
--- Chong xac nhan runtime: dung BEN CANH coin la server nhan .Touched (khong can dung
--- chinh xac len coin) -> lai gan 1 cum coin thi claim CA CUM 1 luc, nhanh hon nhat
--- tung coin. KHONG tu tang State.Collected o day: count that di qua remote CoinCollected.
--- Chi duoc goi trong phase collect cua farmMoveStep (da qua gate RoundActive + con
--- song + AutoCollect) -> khong fire o lobby / khi chet / coin da nhat.
-local function fireTouchNearbyCoins(root)
-	if not CFG.TouchNearbyCoins or Runtime.FastClaimBroken then
-		-- FastClaimBroken: firetouchinterest da xac dinh khong an -> fire cum vo ich, bo.
-		return 0
-	end
-	local touchFn = type(firetouchinterest) == "function" and firetouchinterest or nil
-	if not touchFn or not root then
-		return 0
-	end
-	local origin = root.Position
-	local radius = tonumber(CFG.TouchNearbyRadius) or 0
-	local fired = 0
-	forEachClaimableCoin(function(coin)
-		-- isClaimableCoin da doi hoi con TouchInterest; them lop chan coin da danh dau.
-		if coin:GetAttribute("Collected") or coin:GetAttribute("Delete") then
-			return
-		end
-		if radius > 0 then
-			local distance = (coin.Position - origin).Magnitude
-			if distance > radius then
-				return
-			end
-		end
-		pcall(touchFn, root, coin, 0) -- bat dau cham
-		pcall(touchFn, root, coin, 1) -- ket thuc cham
-		fired = fired + 1
-	end)
-	return fired
-end
+-- (DA XOA fastTouchCoin + fireTouchNearbyCoins: 100% physics touch, khong dung
+-- firetouchinterest nua — emulator khong ho tro; cham cum da co buoc 4b o tren.)
 
 local function chooseHideTarget(murdererPosition)
 	local best = nil
@@ -2222,14 +2332,19 @@ end
 
 local function farmMoveStep()
 	if not CFG.Enabled or not State.RoundActive then
+		-- Tha anchor ngay ca khi return som — ban cu chi tha o cuoi, nen round end
+		-- giua luc touch lam nhan vat treo anchor dung im o lobby.
+		releaseCoinAnchor()
 		return
 	end
 	if not isAliveByData() then
+		releaseCoinAnchor()
 		State.Status = "PlayerData bao da chet; dung movement round nay"
 		return
 	end
 	local humanoid = getHumanoid()
 	if not humanoid or humanoid.Health <= 0 then
+		releaseCoinAnchor()
 		State.Status = "Cho Humanoid san sang"
 		return
 	end
@@ -2261,11 +2376,28 @@ local function farmMoveStep()
 
 		local valid = highestHideSpotValid()
 		if not valid then
-			if Runtime.CleanupBusy then
-				State.OpeningHideDeadline = math.max(
-					State.OpeningHideDeadline or 0,
-					now + CFG.OpeningHideSearchTimeout
+			-- DEADLINE CHECK TRUOC MOI NHANH BUSY (fix ket vinh vien): ban cu return
+			-- som o nhanh busy TRUOC khi check deadline -> search coroutine treo/quen
+			-- tra Busy=false la phase nay khong bao gio sang collect, acc dung im
+			-- ca round, moi round lap lai.
+			if State.OpeningHideDeadline and now >= State.OpeningHideDeadline then
+				State.Phase = "collect"
+				pushLog(
+					"Opening hide qua deadline (busy/timeout) -> collect, "
+						.. "khong bia toa do"
 				)
+				return
+			end
+			if Runtime.CleanupBusy then
+				-- Extend deadline CHI 1 LAN (ban cu extend moi tick -> CleanupBusy
+				-- dinh true la deadline bi day vo han).
+				if not State.OpeningHideDeadlineExtended then
+					State.OpeningHideDeadlineExtended = true
+					State.OpeningHideDeadline = math.max(
+						State.OpeningHideDeadline or 0,
+						now + CFG.OpeningHideSearchTimeout
+					)
+				end
 				State.Status =
 					"Cho LowRender/cleanup xong roi moi scan diem cao"
 				return
@@ -2275,17 +2407,9 @@ local function farmMoveStep()
 					"Dang quet workspace de chon diem cao heuristic"
 				return
 			end
-			if State.OpeningHideDeadline and now >= State.OpeningHideDeadline then
-				State.Phase = "collect"
-				pushLog(
-					"Timeout tim diem cao heuristic -> van tiep tuc collect, "
-						.. "khong bia toa do"
-				)
-			else
-				requestHighestHideSearch()
-				State.Status =
-					"Dang tim BasePart cao nhat trong bien X/Z CoinVisual"
-			end
+			requestHighestHideSearch()
+			State.Status =
+				"Dang tim BasePart cao nhat trong bien X/Z CoinVisual"
 			return
 		end
 
@@ -2344,11 +2468,6 @@ local function farmMoveStep()
 			return
 		end
 
-		-- CLAIM CA CUM: fire touch moi coin claim duoc quanh nhan vat (chong xac nhan
-		-- dung ben canh la an). Da qua gate: RoundActive + con song + AutoCollect + phase
-		-- collect (round dang co coin) -> "call dung luc coin spawn, khong call o lobby/khi chet".
-		fireTouchNearbyCoins(root)
-
 		-- Murderer gan KHONG con bo collect nup nua. Thay vao do chooseClaimableCoin
 		-- se tu chon coin XA murderer (nhat + thoat cung luc). Chi cap nhat khoang
 		-- cach cho GUI o day; viec ne murderer nam trong logic chon coin ben duoi.
@@ -2362,8 +2481,18 @@ local function farmMoveStep()
 		local now = os.clock()
 		local target = State.TargetCoin
 		if not claimableCoinStillValid(target, now) then
-			target = chooseClaimableCoin()
-			setTargetCoin(target)
+			-- Ton trong cooldown NextChooseAt (coinScanTask dat khi map trong) —
+			-- ban cu farmMoveStep goi thang chooseClaimableCoin bo qua cooldown
+			-- nen map trong van full-scan moi 0.35s.
+			if now >= (Runtime.NextChooseAt or 0) then
+				target = chooseClaimableCoin()
+				setTargetCoin(target)
+				if not target then
+					Runtime.NextChooseAt = now + 0.3
+				end
+			else
+				target = nil
+			end
 		end
 		if not target then
 			releaseCoinAnchor()
@@ -2371,7 +2500,7 @@ local function farmMoveStep()
 			return
 		end
 
-		-- Di chuyen toi coin.CFrame: tween (UseTween) hoac anchor-step/teleport.
+		-- Di chuyen toi coin.CFrame: tween xich doan (UseTween) hoac anchor-step.
 		local remaining
 		if CFG.UseTween then
 			remaining = tweenStepToward(target.CFrame)
@@ -2380,51 +2509,48 @@ local function farmMoveStep()
 		end
 		if remaining <= 0 then
 			rememberHidePoint(target.Position)
-			-- FastClaim: co firetouchinterest + da bat TouchNearbyCoins -> fire nhanh, khong
-			-- cho 0.45s (cum da claim moi tick). Khong co firetouchinterest -> fallback
-			-- touchCoinAndWait (man unanchor + physics + wait, an toan cho executor yeu).
-			local hasTouchFn = type(firetouchinterest) == "function"
-			-- FastClaimBroken: firetouchinterest co ton tai nhung server khong nhan
-			-- (executor stub) -> bo fast claim, ve physics touch (main.lua da test OK).
-			local useFast = CFG.FastClaim and CFG.TouchNearbyCoins and hasTouchFn
-				and not Runtime.FastClaimBroken
-			if useFast then
-				State.Status = "Toi coin; fast claim"
-				fastTouchCoin(target)
+			-- 100% PHYSICS TOUCH (firetouchinterest da bo hoan toan): unanchor +
+			-- cham that + poll thoat som + cham ca cum ke ben (buoc 4b ben trong).
+			State.Status = "Toi coin; dang cham physics"
+			touchCoinAndWait(target)
+			-- Timestamp MOI sau yield (touchCoinAndWait cho 0.4-1.6s): dung `now` cu
+			-- lam blacklist ngan/am -> coin fail bi chon lai ngay va bi tinh 3 fail oan.
+			local after = os.clock()
+			if not claimableCoinStillValid(target, after) then
+				-- Coin mat TouchInterest = server DA nhan. Chon coin ke NGAY trong
+				-- cung tick (ban cu de tick sau moi chon -> phi 1 nhip MoveDelay).
+				setTargetCoin(chooseClaimableCoin())
 			else
-				State.Status = "Da toi coin; dang fire touch"
-				touchCoinAndWait(target)
-			end
-			-- Sau 0.35s: check coin da duoc nhat chua.
-			if not claimableCoinStillValid(target, os.clock()) then
-				-- Coin da mat TouchInterest = da nhat thanh cong.
-				Runtime.FastClaimFails = 0
-				setTargetCoin(nil)
-			else
-				-- Van con TouchInterest = chua nhat duoc, blacklist roi thu coin khac.
-				-- Chi tinh fail khi 5s gan day KHONG co CoinCollected nao (bang chung
-				-- server) -> tranh dem nham do replicate tre tren executor xin.
-				if useFast
-					and os.clock() - (Runtime.LastCoinCollectedAt or 0) > 5 then
-					Runtime.FastClaimFails = (Runtime.FastClaimFails or 0) + 1
-					if Runtime.FastClaimFails >= 8 then
-						Runtime.FastClaimBroken = true
-						pushLog("firetouchinterest KHONG an coin (8 lan lien tiep)"
-							.. " -> chuyen physics touch (unanchor + cham that)")
-					end
+				-- Chua an. Coin "chai" (vi tri physics khong cham duoc: ke map,
+				-- coin bug) mit 3 lan -> BO HAN round nay, khong ping-pong quanh no
+				-- ca round nua (resetRoundState moi round da clear blacklist).
+				local fails = (Runtime.CoinFailCount[target] or 0) + 1
+				Runtime.CoinFailCount[target] = fails
+				if fails >= 3 then
+					Runtime.CoinBlacklist[target] = after + 9e8
+					pushLog("Coin chai (3 lan touch fail) -> bo het round nay")
+				else
+					Runtime.CoinBlacklist[target] = after + CFG.RetryDelay
 				end
-				Runtime.CoinBlacklist[target] = os.clock() + CFG.RetryDelay
 				setTargetCoin(nil)
 			end
 		else
 			State.TargetArrivedAt = nil
+			-- STUCK THEO TICK (khong theo giay wall-clock): emulator freeze 3-5s lam
+			-- os.clock troi nhung 0 frame chay -> dem giay blacklist oan coin tot,
+			-- roi doi coin khac lai freeze lai blacklist -> chay vong quanh 0 nhat gi.
 			if not State.LastTargetDistance
 				or remaining < State.LastTargetDistance - 0.2 then
 				State.LastTargetDistance = remaining
+				State.NoProgressTicks = 0
 				State.LastTargetProgressAt = now
-			elseif now - State.LastTargetProgressAt >= CFG.StuckSeconds then
-				Runtime.CoinBlacklist[target] = now + CFG.RetryDelay
-				setTargetCoin(nil)
+			else
+				State.NoProgressTicks = (State.NoProgressTicks or 0) + 1
+				if State.NoProgressTicks
+					>= math.ceil(CFG.StuckSeconds / math.max(CFG.MoveDelay, 0.1)) then
+					Runtime.CoinBlacklist[target] = now + CFG.RetryDelay
+					setTargetCoin(nil)
+				end
 			end
 			State.Status = CFG.UseTween and "Dang tween toi coin" or "Dang anchor-step toi coin"
 		end
@@ -2432,6 +2558,18 @@ local function farmMoveStep()
 	end
 
 	if State.Phase == "suicide" then
+		-- TIMEOUT 60s: murderer AFK/khong chem -> ve hide, khong dung truoc mat no
+		-- vo tan (ban cu khong co timeout — 1 nguon "cho rat lau"). SuicideGaveUp
+		-- chan hide re-enter suicide (khong co co nay thi tick sau vao lai ngay).
+		if State.SuicideStartedAt
+			and os.clock() - State.SuicideStartedAt > 60 then
+			releaseCoinAnchor()
+			State.Phase = "hide"
+			State.SuicideStartedAt = nil
+			State.SuicideGaveUp = true
+			pushLog("Suicide qua 60s khong duoc chem -> ve nup het round nay")
+			return
+		end
 		local mRoot = getMurdererRoot()
 		if not mRoot then
 			releaseCoinAnchor()
@@ -2458,12 +2596,14 @@ local function farmMoveStep()
 		requestHighestUpgradeIfDue(os.clock())
 		-- Da nhat xong + chi con MINH minh song -> tu sat cho murderer, lam van moi.
 		if CFG.SuicideWhenLastAlive
+			and not State.SuicideGaveUp
 			and State.CollectionFinished
 			and State.Role ~= "Murderer"
 			and getMurdererRoot() then
 			local aliveOthers = countAliveNonMurderer()
 			if aliveOthers >= 0 and aliveOthers <= 1 then
 				State.Phase = "suicide"
+				State.SuicideStartedAt = os.clock()
 				pushLog("Nhat xong + con moi minh -> tu sat truoc mat murderer, lam van moi")
 				return
 			end
@@ -3455,9 +3595,9 @@ if R_CoinCollected then
 		if amount > prevAmount then
 			Runtime.TotalCoinsEarned = (Runtime.TotalCoinsEarned or 0)
 				+ (amount - prevAmount)
-			-- Bang chung claim THAT (server xac nhan) -> fast claim dang hoat dong.
+			-- Moc "claim THAT" (server xac nhan) — watchdog dua vao day de biet
+			-- farm con song hay dang ket.
 			Runtime.LastCoinCollectedAt = os.clock()
-			Runtime.FastClaimFails = 0
 		end
 		State.BagCounts[id] = amount
 		if cap then
@@ -3488,9 +3628,12 @@ if R_CoinsStarted then
 		resetRoundState("waiting")
 		State.RoundActive = true
 		State.CoinsStartedActive = true
-		-- Ep rescan CoinContainer NGAY (map moi) de bat coin lien, khong cho cache.
+		Runtime.RoundStartedAt = os.clock()
+		-- Map moi: ep 1 lan rescan (LastContainerScan=0 -> forEach quet ngay lan dau).
+		-- KHONG set CoinContainers=nil nhu ban cu — nil lam moi lan goi deu full-scan
+		-- khi map chua stream (bao GetDescendants) va lam hook DescendantAdded diec
+		-- (hook can table ton tai de append). Container map cu tu chet vi Parent=nil.
 		Runtime.LastContainerScan = 0
-		Runtime.CoinContainers = nil
 		-- XAC NHAN THAT: CoinBagContainerScript.lua:51-59 doc p11[bagName] ~= nil.
 		-- activeBags la table key theo bagName (= bagId cua CoinCollected), gia tri
 		-- danh dau bag do dang active. Nap vao ActiveBags de allKnownBagsFull() dung.
@@ -3534,6 +3677,7 @@ if R_RoundStart then
 			end
 		end
 		State.RoundActive = true
+		Runtime.RoundStartedAt = os.clock()
 		refreshRole()
 		if State.Phase == "waiting" or State.Phase == "loading" then
 			beginRoundMovement()
@@ -3614,6 +3758,10 @@ local IMPORTANT_TASKS = {
 	FarmMove = true,
 	CoinScan = true,
 	FpsCap = true, -- khong cho adaptiveDelay keo dai nhip re-apply cap
+	-- RoleRefresh nhe (doc PlayerData) nhung quyet dinh suicide/murderer-avoid dua
+	-- vao no; de adaptiveDelay keo x2.4 khi FPS thap (emulator) la role cham 2-3s.
+	RoleRefresh = true,
+	Watchdog = true, -- watchdog phai chay dung nhip ke ca khi FPS thap
 }
 
 local function adaptiveDelay(name, baseDelay)
@@ -3742,6 +3890,7 @@ local function coinScanTask()
 			if coinAvailable(coin, now)
 				and coin:GetAttribute("RoundEnd") ~= true then
 				State.RoundActive = true
+				Runtime.RoundStartedAt = now
 				local openingHide = beginRoundMovement()
 				pushLog(
 					openingHide
@@ -3751,6 +3900,28 @@ local function coinScanTask()
 				break
 			end
 		end
+	end
+	-- ROUND-ORPHAN WATCHDOG (fix ket vinh vien "farm 6h ngoi cho"): neu miss event
+	-- CoinsStarted/RoundStart (emulator lag/drop replicate) thi ban cu ngoi
+	-- "waiting" MAI MAI du map day coin (fallback tren chi song 10s dau boot).
+	-- Gio: thay coin claim duoc lien tuc 20s ma khong co round -> tu vao collect.
+	if not State.RoundActive
+		and (State.Phase == "waiting" or State.Phase == "loading") then
+		if countClaimableCoins(2) > 0 then
+			if not Runtime.OrphanCoinSince then
+				Runtime.OrphanCoinSince = now
+			elseif now - Runtime.OrphanCoinSince >= 20 then
+				Runtime.OrphanCoinSince = nil
+				Runtime.RoundStartedAt = now
+				State.RoundActive = true
+				beginRoundMovement()
+				pushLog("WATCHDOG: co coin ma khong co round event 20s -> tu vao collect")
+			end
+		else
+			Runtime.OrphanCoinSince = nil
+		end
+	else
+		Runtime.OrphanCoinSince = nil
 	end
 	if State.RoundActive and State.Phase == "collect" and CFG.AvoidMurderer
 		and claimableCoinStillValid(State.TargetCoin, now) then
@@ -3899,6 +4070,59 @@ end)
 addTask("FarmMove", farmMoveStep, function()
 	return State.RoundActive and CFG.MoveDelay or 1
 end)
+-- WATCHDOG TONG (chong ket vinh vien tren emulator lag):
+-- (1) Round "chet": RoundActive > 7 phut khong nhat duoc coin + map het coin
+--     (miss event round-end) -> dong round ve waiting cho round-orphan/event sau.
+-- (2) Collect ky: 90s khong tien trien (khong an coin, khong tien lai gan target)
+--     -> reset target + xoa blacklist + ep rescan container; 3 strike lien tiep
+--     -> coi round chet, dong round.
+addTask("Watchdog", function()
+	if not State.RoundActive then
+		Runtime.WatchdogStrikes = 0
+		return
+	end
+	local now = os.clock()
+	local roundAge = now - (Runtime.RoundStartedAt or now)
+	local lastCollect = Runtime.LastCoinCollectedAt or 0
+	if roundAge > 420
+		and now - lastCollect > 420
+		and countClaimableCoins(5) == 0 then
+		Runtime.WatchdogStrikes = 0
+		closeRound("WATCHDOG: round qua 7 phut khong hoat dong -> ve waiting")
+		return
+	end
+	if State.Phase ~= "collect" then
+		return
+	end
+	local lastGood = math.max(
+		lastCollect,
+		State.LastTargetProgressAt or 0,
+		Runtime.WatchdogKickAt or 0,
+		Runtime.RoundStartedAt or 0
+	)
+	if now - lastGood < 90 then
+		return
+	end
+	Runtime.WatchdogKickAt = now
+	Runtime.WatchdogStrikes = (Runtime.WatchdogStrikes or 0) + 1
+	pushLog("WATCHDOG: 90s khong tien trien -> reset target + rescan (strike "
+		.. Runtime.WatchdogStrikes .. ")")
+	cancelCoinTween()
+	releaseCoinAnchor()
+	clearTable(Runtime.CoinBlacklist)
+	clearTable(Runtime.CoinFailCount)
+	setTargetCoin(nil)
+	Runtime.LastContainerScan = 0
+	Runtime.NextChooseAt = 0
+	refreshCoinCache()
+	if Runtime.WatchdogStrikes >= 3 then
+		Runtime.WatchdogStrikes = 0
+		closeRound("WATCHDOG: 3 strike lien tiep -> coi round chet, ve waiting")
+	end
+end, function()
+	return 15
+end)
+
 addTask("CoinScan", coinScanTask, function()
 	return State.RoundActive and CFG.CoinScanDelay or 2
 end)
@@ -4026,15 +4250,17 @@ addTask("AutoChangeAcc", function()
 	local option = Runtime.GodlyReported
 		and CFG.AutoSwapOptionHaveGodly
 		or CFG.AutoSwapOptionNoGodly
-	-- SwapCalled=true TRUOC khi cho -> task 10s khong ban trung lan 2 trong luc doi.
-	pushLog("DU DIEU KIEN doi acc (xong daily + het so) -> cho 60s roi call autoswap")
+	-- SwapCalled=true TRUOC khi cho -> task check khong ban trung lan 2 trong luc doi.
+	local swapDelay = math.max(0, tonumber(CFG.AutoSwapDelaySeconds) or 10)
+	pushLog("DU DIEU KIEN doi acc (xong daily + het so) -> cho "
+		.. swapDelay .. "s roi call autoswap")
 	task.spawn(function()
-		task.wait(60) -- dem 60s cho server luu/on dinh truoc khi doi acc
+		task.wait(swapDelay) -- cho server luu/on dinh truoc khi doi acc
 		if not ownsRuntime() then
 			return
 		end
 		local ok = callAutoSwap(option)
-		pushLog("Het 60s cho -> autoswap option "
+		pushLog("Het " .. swapDelay .. "s cho -> autoswap option "
 			.. tostring(option) .. (ok and " (da gui)" or " (loi/khong gui)"))
 	end)
 end, function()
