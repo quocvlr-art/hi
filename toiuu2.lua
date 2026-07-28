@@ -226,6 +226,13 @@ local CFG = {
 	-- Cho bao nhieu GIAY sau khi DU dieu kien (xong daily + het so) roi moi call
 	-- autoswap (de server luu/on dinh). Gan qua getgenv config duoc.
 	AutoSwapDelaySeconds = 10,
+	-- BACKUP khi API ben cung cap LAG / khong nhan: gui lai bao nhieu lan trong 1
+	-- chu ky (moi lan cach nhau RetryDelay * so lan -> 20s, 40s, 60s, 80s).
+	AutoSwapMaxRetries = 5,
+	AutoSwapRetryDelaySeconds = 20,
+	-- Het ca 5 lan van fail -> nghi bao lau roi TU DONG lam lai ca chu ky (van con
+	-- du dieu kien doi acc). 0 = khong lam lai (bo cuoc sau chu ky dau).
+	AutoSwapRetryCycleSeconds = 180,
 
 	LuaHeapSoftMB = 150,
 	ForceFullGC = true,
@@ -341,6 +348,9 @@ local Runtime = {
 	GodlyReported = false,
 	-- Auto change acc (autoswap): da call chua (1 lan/phien) + cache event/quest.
 	SwapCalled = false,
+	-- Backup khi API lag: moc thoi gian duoc phep thu lai ca chu ky + dem chu ky.
+	SwapRetryAfter = 0,
+	SwapCycles = 0,
 	MainEvent = nil,
 	DailyQuestProgressText = nil,
 	-- Engine saver: trang thai da chinh de restore khi shutdown.
@@ -1076,18 +1086,22 @@ end
 
 -- POST accountops.org/api/accounts/autoswap-complete { username, option }.
 -- option = so rule On-Demand tren web (1 = folder no godly, 2 = folder havegodly).
+-- Tra ve: ok (server NHAN THAT hay khong), detail (mo ta de log), fatal (loi
+-- khong the retry: thieu key / executor khong co ham http).
+-- LUU Y: ban cu chi `pcall(httpFn, ...)` -> API tra 500/429/timeout van bao "da gui"
+-- vi pcall chi bat crash. Gio doc StatusCode that de biet server co nhan khong.
 local function callAutoSwap(option)
 	local key = tostring(CFG.AutoSwapApiKey or "")
 	if key == "" then
 		State.LastError = "AutoSwap: chua co ApiKey"
-		return false
+		return false, "thieu ApiKey", true
 	end
 	local httpFn = (type(request) == "function" and request)
 		or (type(http_request) == "function" and http_request)
 		or (syn and type(syn.request) == "function" and syn.request)
 		or (http and type(http.request) == "function" and http.request)
 	if not httpFn then
-		return false
+		return false, "executor khong co ham http request", true
 	end
 	local username = tostring(CFG.AutoSwapUsername or "")
 	if username == "" then
@@ -1100,9 +1114,9 @@ local function callAutoSwap(option)
 		})
 	end)
 	if not okBody then
-		return false
+		return false, "khong encode duoc JSON", true
 	end
-	return pcall(httpFn, {
+	local okCall, res = pcall(httpFn, {
 		Url = tostring(CFG.AutoSwapUrl or ""),
 		Method = "POST",
 		Headers = {
@@ -1111,6 +1125,32 @@ local function callAutoSwap(option)
 		},
 		Body = body,
 	})
+	if not okCall then
+		-- Timeout/mat mang/DNS -> loi tam thoi, RETRY duoc.
+		return false, "loi goi HTTP: " .. tostring(res), false
+	end
+	if type(res) ~= "table" then
+		-- Executor cu khong tra table -> khong biet duoc, coi nhu OK (nhu ban cu).
+		return true, "da gui (executor khong tra status)", false
+	end
+	local status = tonumber(res.StatusCode) or tonumber(res.Status)
+	if not status then
+		if res.Success == true then
+			return true, "da gui (Success=true)", false
+		end
+		return true, "da gui (khong doc duoc status)", false
+	end
+	if status >= 200 and status < 300 then
+		return true, "HTTP " .. status, false
+	end
+	-- 4xx (tru 408/429) = sai key/sai rule/sai username -> retry cung vo ich.
+	local fatal = status >= 400 and status < 500
+		and status ~= 408 and status ~= 429
+	local bodyText = tostring(res.Body or "")
+	if #bodyText > 120 then
+		bodyText = bodyText:sub(1, 120)
+	end
+	return false, "HTTP " .. status .. " " .. bodyText, fatal
 end
 
 if not ownsRuntime() then
@@ -4238,6 +4278,10 @@ addTask("AutoChangeAcc", function()
 	if not CFG.AutoChangeAcc or Runtime.SwapCalled then
 		return
 	end
+	-- Dang trong thoi gian nghi giua 2 chu ky retry (API ben cung cap dang lag).
+	if os.clock() < (Runtime.SwapRetryAfter or 0) then
+		return
+	end
 	-- Chua xong het moc daily -> chua doi (acc con luot lam nhiem vu hom nay).
 	if info.FinalTarget <= 0 or info.Progress < info.FinalTarget then
 		return
@@ -4247,21 +4291,61 @@ addTask("AutoChangeAcc", function()
 		return
 	end
 	Runtime.SwapCalled = true
+	Runtime.SwapCycles = (Runtime.SwapCycles or 0) + 1
+	local cycle = Runtime.SwapCycles
 	local option = Runtime.GodlyReported
 		and CFG.AutoSwapOptionHaveGodly
 		or CFG.AutoSwapOptionNoGodly
 	-- SwapCalled=true TRUOC khi cho -> task check khong ban trung lan 2 trong luc doi.
 	local swapDelay = math.max(0, tonumber(CFG.AutoSwapDelaySeconds) or 10)
 	pushLog("DU DIEU KIEN doi acc (xong daily + het so) -> cho "
-		.. swapDelay .. "s roi call autoswap")
+		.. swapDelay .. "s roi call autoswap"
+		.. (cycle > 1 and (" (chu ky " .. cycle .. ")") or ""))
 	task.spawn(function()
 		task.wait(swapDelay) -- cho server luu/on dinh truoc khi doi acc
 		if not ownsRuntime() then
 			return
 		end
-		local ok = callAutoSwap(option)
-		pushLog("Het " .. swapDelay .. "s cho -> autoswap option "
-			.. tostring(option) .. (ok and " (da gui)" or " (loi/khong gui)"))
+		-- BACKUP CHO API LAG: gui lai nhieu lan, cach nhau tang dan (20s, 40s...).
+		-- Dung ngay khi server NHAN THAT (HTTP 2xx) hoac gap loi khong the retry
+		-- (sai ApiKey / sai rule 4xx / executor khong co ham http).
+		local maxTries = math.max(1,
+			math.floor(tonumber(CFG.AutoSwapMaxRetries) or 5))
+		local retryDelay = math.max(5,
+			tonumber(CFG.AutoSwapRetryDelaySeconds) or 20)
+		for attempt = 1, maxTries do
+			if not ownsRuntime() then
+				return
+			end
+			local ok, detail, fatal = callAutoSwap(option)
+			if ok then
+				pushLog("AUTOSWAP option " .. tostring(option)
+					.. " THANH CONG (lan " .. attempt .. "): " .. tostring(detail))
+				return
+			end
+			State.LastError = "AutoSwap: " .. tostring(detail)
+			pushLog("AUTOSWAP FAIL lan " .. attempt .. "/" .. maxTries
+				.. ": " .. tostring(detail))
+			if fatal then
+				pushLog("AUTOSWAP loi KHONG THE retry -> dung (kiem tra ApiKey/rule)")
+				return
+			end
+			if attempt < maxTries then
+				task.wait(retryDelay * attempt) -- backoff tang dan
+			end
+		end
+		-- Het luot chu ky nay -> MO KHOA de task check tu lam lai ca chu ky sau
+		-- AutoSwapRetryCycleSeconds (dieu kien doi acc van con dung).
+		local cycleWait = tonumber(CFG.AutoSwapRetryCycleSeconds) or 180
+		if cycleWait > 0 then
+			Runtime.SwapRetryAfter = os.clock() + cycleWait
+			Runtime.SwapCalled = false
+			pushLog("AUTOSWAP het " .. maxTries .. " lan van fail -> nghi "
+				.. cycleWait .. "s roi tu thu lai chu ky moi")
+		else
+			pushLog("AUTOSWAP het " .. maxTries .. " lan van fail -> dung"
+				.. " (AutoSwapRetryCycleSeconds = 0)")
+		end
 	end)
 end, function()
 	return 10
