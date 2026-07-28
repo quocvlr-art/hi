@@ -195,17 +195,22 @@ local CFG = {
 	-- la vo nghia voi assembly/script vi source khong du du lieu.
 	HardMapless = false,
 
-	-- === AUTO BOX + GODLY WEBHOOK (dump: box "Summer2026Box", godly "Icecream") ===
-	AutoBuyBox = false,          -- MAC DINH TAT (tieu so that). Bat khi da dien WebhookUrl.
-	BoxName = "Summer2026Box",   -- id box trong Sync.MysteryBox (tu dump cua chong)
-	BoxCurrency = "Shells",      -- mua bang so
-	BoxPrice = 120,              -- gia box (so so) - tu anh shop
-	GodlyItemName = "Icecream",  -- ten godly can bao (khop RewardedItemId, ca "IcecreamChroma")
-	WebhookUrl = "",             -- URL webhook Discord (de trong = KHONG gui)
-	GodlyGreenUI = true,         -- godly -> doi nen UI den thanh xanh la cay
-	-- Anh thumbnail webhook embed (link chong cung cap - nguon ngoai game).
-	GodlyImageUrl = "https://static.wikia.nocookie.net/murder-mystery-2/images/b/b6/Icecream_knife.png/revision/latest?cb=20260724060716",
-	GodlyChromaImageUrl = "https://static.wikia.nocookie.net/murder-mystery-2/images/9/9b/C_Icecream.png/revision/latest?cb=20260724020208",
+	-- === AUTO BOX SHOP + GODLY WEBHOOK ===
+	-- Sau khi bat AutoBuyBox=true, CHI CAN doi BoxName. Nhan ca ID that va ten
+	-- hien thi (khong phan biet hoa/thuong).
+	-- Dump source hien tai (11 box thuong, deu 1000 Coins):
+	--   MysteryBox1 = Mystery Box #1  | MysteryBox2 = Mystery Box #2
+	--   KnifeBox1..KnifeBox5 = Knife Box #1..#5
+	--   "MLG Box" = Rainbow Box
+	--   GunBox1..GunBox3 = Gun Box #1..#3
+	AutoBuyBox = false,          -- MAC DINH TAT vi day la tieu tien that.
+	BoxName = "MysteryBox1",     -- vi du: "KnifeBox3", "Rainbow Box", "MLG Box"
+	-- De trong = tu doc currency/gia tu Sync.NewShop. Box thuong luon uu tien Coins.
+	-- Chi can dien cho event cu neu game khong dump du offer (vd "Shells").
+	BoxCurrency = "",
+	DumpBoxNames = true,         -- dump catalog runtime ra console moi khi game cap nhat.
+	WebhookUrl = "",             -- URL webhook Discord (de trong = KHONG gui).
+	GodlyGreenUI = true,         -- trung bat ky Godly nao -> doi nen UI thanh xanh.
 
 	-- === SERVER HOP khi farm cham (config chong yeu cau) ===
 	AutoServerHop = false,               -- MAC DINH TAT (hop se reload game). Bat neu muon.
@@ -213,26 +218,19 @@ local CFG = {
 	TIME_TO_CHECK_COIN_EARNED = 1800,    -- chu ky kiem tra earned (giay)
 
 	-- === AUTO CHANGE ACC (accountops.org autoswap) ===
-	-- Xong TOAN BO moc quest DAILY (chi daily, khong tinh weekly) + het so mua box
+	-- Xong TOAN BO moc quest DAILY (chi daily, khong tinh weekly) + khong con du
+	-- currency mua box dang chon
 	-- -> POST autoswap-complete de doi acc (tool move acc qua folder khac + tu keo
 	-- acc moi vao). MAC DINH TAT (doi acc that, khong hoan tac). Bat = true khi da
-	-- tao rule On-Demand tren web + dien ApiKey. Can AutoBuyBox=true de tieu het so.
+	-- tao rule On-Demand tren web + dien ApiKey. Can AutoBuyBox=true de tieu het tien.
 	AutoChangeAcc = false,
 	AutoSwapApiKey = "",        -- X-Api-Key (dat trong getgenv config, DUNG lo ra ban public)
 	AutoSwapUrl = "https://accountops.org/api/accounts/autoswap-complete",
 	AutoSwapUsername = "",      -- de trong = dung ten acc hien tai (LocalPlayer.Name)
 	AutoSwapOptionNoGodly = 1,  -- rule On-Demand cho acc KHONG godly -> folder "no godly"
 	AutoSwapOptionHaveGodly = 2,-- rule On-Demand cho acc TRUNG godly -> folder "havegodly"
-	-- Cho bao nhieu GIAY sau khi DU dieu kien (xong daily + het so) roi moi call
-	-- autoswap (de server luu/on dinh). Gan qua getgenv config duoc.
-	AutoSwapDelaySeconds = 10,
-	-- BACKUP khi API ben cung cap LAG / khong nhan: gui lai bao nhieu lan trong 1
-	-- chu ky (moi lan cach nhau RetryDelay * so lan -> 20s, 40s, 60s, 80s).
-	AutoSwapMaxRetries = 5,
-	AutoSwapRetryDelaySeconds = 20,
-	-- Het ca 5 lan van fail -> nghi bao lau roi TU DONG lam lai ca chu ky (van con
-	-- du dieu kien doi acc). 0 = khong lam lai (bo cuoc sau chu ky dau).
-	AutoSwapRetryCycleSeconds = 180,
+	-- swap() = check dieu kien -> doi 60s -> request. Neu fail, loop goi lai swap()
+	-- vo han moi 60s; chi dung khi HTTP xac nhan thanh cong hoac runtime bi shutdown.
 
 	LuaHeapSoftMB = 150,
 	ForceFullGC = true,
@@ -340,17 +338,28 @@ local Runtime = {
 	FpsFrames = 0,
 	FpsSampleAt = os.clock(),
 	-- Uptime + tong coin earned (cho GUI timer va server-hop check).
-	StartTime = os.clock(),
+	StartTime = type(previous) == "table"
+		and tonumber(previous.StartTime)
+		or os.clock(),
 	TotalCoinsEarned = 0,
 	-- Auto-box + godly.
 	BoxBusy = false,
-	BoxesOpened = 0,
-	GodlyReported = false,
-	-- Auto change acc (autoswap): da call chua (1 lan/phien) + cache event/quest.
-	SwapCalled = false,
-	-- Backup khi API lag: moc thoi gian duoc phep thu lai ca chu ky + dem chu ky.
-	SwapRetryAfter = 0,
-	SwapCycles = 0,
+	BoxesOpened = type(previous) == "table"
+		and (tonumber(previous.BoxesOpened) or 0)
+		or 0,
+	HasGodly = type(previous) == "table"
+		and (previous.HasGodly == true or previous.GodlyReported == true)
+		or false,
+	GodlyWebhookCount = type(previous) == "table"
+		and (tonumber(previous.GodlyWebhookCount) or 0)
+		or 0,
+	BoxCatalogSignature = nil,
+	-- Auto change acc: 1 worker doc lap, retry vo han moi 60s den khi HTTP success.
+	SwapSucceeded = type(previous) == "table" and previous.SwapSucceeded == true,
+	SwapAttempts = type(previous) == "table"
+		and (tonumber(previous.SwapAttempts) or 0)
+		or 0,
+	SwapWorker = nil,
 	MainEvent = nil,
 	DailyQuestProgressText = nil,
 	-- Engine saver: trang thai da chinh de restore khi shutdown.
@@ -405,6 +414,10 @@ local State = {
 	FinalHideSearchAttempts = 0,
 	HighestUpgradeScans = 0,
 	CollectionFinished = false,
+	GodlyItem = type(previous) == "table"
+		and type(previous.State) == "table"
+		and previous.State.GodlyItem
+		or nil,
 
 	Status = "Khoi dong...",
 	FPS = 0,
@@ -805,52 +818,262 @@ local function getAccountName()
 end
 
 --====================================================================
--- 3b) SHELLS + AUTO BOX + GODLY WEBHOOK + SERVER HOP
+-- 3b) SHOP BOX + GODLY WEBHOOK + SERVER HOP
 --====================================================================
--- BoxCurrency co the la KEY that ("SummerKey2026") hoac TEN hien thi ("Shells").
--- Materials.lua:1072 SummerKey2026 = { Name="Shells", Currency=true }. So du + OpenCrate
--- deu dung KEY that. Ham nay map "Shells" -> "SummerKey2026" qua Sync.Materials.
-local function resolveCurrencyKey()
-	local cur = tostring(CFG.BoxCurrency or "")
-	if Sync and type(Sync.Materials) == "table" then
-		if Sync.Materials[cur] then
-			return cur -- da la key that
-		end
-		for key, mat in pairs(Sync.Materials) do
-			if type(mat) == "table"
-				and (tostring(mat.Name) == cur or tostring(mat.ItemName) == cur) then
-				return key -- vd "Shells" -> "SummerKey2026"
-			end
+-- Currency co the la KEY that ("SummerKey2026") hoac ten hien thi ("Shells").
+-- OpenCrate luon can KEY that; map ten hien thi qua Sync.Materials.
+local function resolveCurrencyKey(currency)
+	local cur = tostring(currency or "")
+	if cur == "" or not (Sync and type(Sync.Materials) == "table") then
+		return cur
+	end
+	if Sync.Materials[cur] then
+		return cur
+	end
+	local wanted = cur:lower()
+	for key, mat in pairs(Sync.Materials) do
+		if type(mat) == "table"
+			and (tostring(mat.Name or ""):lower() == wanted
+				or tostring(mat.ItemName or ""):lower() == wanted) then
+			return key
 		end
 	end
 	return cur
 end
 
-local function getShells()
-	if not (ProfileData
-		and type(ProfileData.Materials) == "table"
-		and type(ProfileData.Materials.Owned) == "table") then
-		return 0
-	end
-	local key = resolveCurrencyKey()
-	return tonumber(ProfileData.Materials.Owned[key])
-		or tonumber(ProfileData[key])
-		or 0
-end
-
--- Coin trong SHOP: ShopModule.lua:317/562 so gia bang ProfileData.Coins.
--- Fallback Materials.Owned.Coins (Sync.Materials co key "Coins", Materials.lua:9).
-local function getShopCoins()
+-- ShopService moi doc Materials.Owned truoc, sau do Weapons.Owned. ProfileData[key]
+-- la fallback legacy. nil = profile/currency CHUA load, khac hoan toan so du 0.
+local function getCurrencyBalance(currency)
 	if type(ProfileData) ~= "table" then
 		return nil
 	end
-	local coins = tonumber(ProfileData.Coins)
-	if coins == nil
-		and type(ProfileData.Materials) == "table"
-		and type(ProfileData.Materials.Owned) == "table" then
-		coins = tonumber(ProfileData.Materials.Owned.Coins)
+	local key = tostring(currency or "")
+	local materials = type(ProfileData.Materials) == "table"
+		and ProfileData.Materials.Owned
+		or nil
+	if type(materials) == "table" and materials[key] ~= nil then
+		return tonumber(materials[key])
 	end
-	return coins
+	local weapons = type(ProfileData.Weapons) == "table"
+		and ProfileData.Weapons.Owned
+		or nil
+	if type(weapons) == "table" and weapons[key] ~= nil then
+		return tonumber(weapons[key])
+	end
+	if ProfileData[key] ~= nil then
+		return tonumber(ProfileData[key])
+	end
+	return nil
+end
+
+local function getShopCoins()
+	return getCurrencyBalance("Coins")
+end
+
+-- New shop: Sync.NewShop[id] {Type="MysteryBox", Price={...}}.
+-- Legacy fallback: Sync.Shop.Weapons[id] {DataType="MysteryBox", Price={...}}.
+local function getBoxOffer(boxId)
+	if not Sync then
+		return nil
+	end
+	local offer = type(Sync.NewShop) == "table" and Sync.NewShop[boxId] or nil
+	if type(offer) == "table"
+		and (offer.Type == "MysteryBox" or offer.DataType == "MysteryBox") then
+		return offer
+	end
+	local weaponsShop = type(Sync.Shop) == "table"
+		and type(Sync.Shop.Weapons) == "table"
+		and Sync.Shop.Weapons
+		or nil
+	offer = weaponsShop and weaponsShop[boxId] or nil
+	if type(offer) == "table"
+		and (offer.Type == "MysteryBox" or offer.DataType == "MysteryBox") then
+		return offer
+	end
+	return nil
+end
+
+-- Box thuong co Coins/Gems/Key: luon chon Coins. Box event khong co Coins:
+-- uu tien BoxCurrency neu user dien, neu de trong thi chon gia event lon nhat
+-- (vd 800 BeachBalls thay vi 1 SummerKey), khong bao gio tu tieu Gems/Robux.
+local function chooseBoxCurrency(priceTable)
+	if type(priceTable) ~= "table" then
+		return nil, nil
+	end
+	local coinPrice = tonumber(priceTable.Coins)
+	if coinPrice and coinPrice > 0 then
+		return "Coins", coinPrice
+	end
+	local configured = resolveCurrencyKey(CFG.BoxCurrency)
+	local configuredPrice = configured ~= "" and tonumber(priceTable[configured]) or nil
+	if configuredPrice and configuredPrice > 0 then
+		return configured, configuredPrice
+	end
+	local bestKey = nil
+	local bestPrice = -math.huge
+	for key, amount in pairs(priceTable) do
+		local numeric = tonumber(amount)
+		local lower = tostring(key):lower()
+		if numeric and numeric > 0
+			and lower ~= "gems"
+			and lower ~= "robux"
+			and lower ~= "key"
+			and numeric > bestPrice then
+			bestKey = tostring(key)
+			bestPrice = numeric
+		end
+	end
+	if bestKey then
+		return bestKey, bestPrice
+	end
+	return nil, nil
+end
+
+-- BoxName nhan ID hoac ten UI; vd "Rainbow Box" tu map dung ID that "MLG Box".
+local function resolveSelectedBoxId()
+	if not (Sync and type(Sync.MysteryBox) == "table") then
+		return nil
+	end
+	local configured = tostring(CFG.BoxName or "")
+	configured = configured:match("^%s*(.-)%s*$") or configured
+	if configured == "" then
+		return nil
+	end
+	if type(Sync.MysteryBox[configured]) == "table" then
+		return configured
+	end
+	local wanted = configured:lower()
+	for id, boxData in pairs(Sync.MysteryBox) do
+		if tostring(id):lower() == wanted
+			or (type(boxData) == "table"
+				and tostring(boxData.Name or ""):lower() == wanted) then
+			return id
+		end
+	end
+	return nil
+end
+
+-- Mot resolver DUY NHAT cho AutoBox, GUI va swap de khong lech currency/gia/balance.
+local function getSelectedBoxPurchaseInfo()
+	if not (Sync and type(Sync.MysteryBox) == "table") then
+		return nil, "Sync.MysteryBox chua load"
+	end
+	local boxId = resolveSelectedBoxId()
+	if not boxId then
+		return nil, "BoxName khong hop le: " .. tostring(CFG.BoxName)
+	end
+	local boxData = Sync.MysteryBox[boxId]
+	local offer = getBoxOffer(boxId)
+	if not offer then
+		return nil, "Chua thay offer shop cho " .. tostring(boxId)
+	end
+	local currency, price = chooseBoxCurrency(offer.Price)
+	if not currency or not price or price <= 0 then
+		return nil, "Khong tim thay gia Coins/event an toan cho " .. tostring(boxId)
+	end
+	local balance = getCurrencyBalance(currency)
+	if balance == nil then
+		return nil, "So du " .. tostring(currency) .. " chua load"
+	end
+	return {
+		Id = boxId,
+		Name = tostring(boxData.Name or boxId),
+		Data = boxData,
+		Offer = offer,
+		Currency = currency,
+		Price = price,
+		Balance = balance,
+	}
+end
+
+local function getBoxGodlyText(boxData)
+	if type(boxData) ~= "table" then
+		return "?"
+	end
+	local names = {}
+	if type(boxData.GodlyTable) == "table" then
+		for _, name in ipairs(boxData.GodlyTable) do
+			names[#names + 1] = tostring(name)
+		end
+	elseif boxData.Godly ~= nil then
+		names[1] = tostring(boxData.Godly)
+	elseif boxData.GodlyCover ~= nil then
+		names[1] = tostring(boxData.GodlyCover)
+	end
+	return #names > 0 and table.concat(names, "/") or "?"
+end
+
+-- Dump moi box dang ban (gom ca event duoc inject sau boot), chi in lai khi catalog doi.
+local function dumpBoxCatalogIfChanged()
+	if not CFG.DumpBoxNames
+		or not (Sync and type(Sync.MysteryBox) == "table") then
+		return
+	end
+	local rows = {}
+	local seen = {}
+	local function addOffer(boxId, offer)
+		if seen[boxId] or type(Sync.MysteryBox[boxId]) ~= "table"
+			or type(offer) ~= "table" then
+			return
+		end
+		local offerType = offer.Type or offer.DataType
+		if offerType ~= "MysteryBox" then
+			return
+		end
+		local currency, price = chooseBoxCurrency(offer.Price)
+		if not currency or not price then
+			return
+		end
+		seen[boxId] = true
+		local boxData = Sync.MysteryBox[boxId]
+		rows[#rows + 1] = {
+			Id = tostring(boxId),
+			Name = tostring(boxData.Name or boxId),
+			Currency = tostring(currency),
+			Price = price,
+			Godly = getBoxGodlyText(boxData),
+		}
+	end
+	if type(Sync.NewShop) == "table" then
+		for boxId, offer in pairs(Sync.NewShop) do
+			addOffer(boxId, offer)
+		end
+	end
+	local legacy = type(Sync.Shop) == "table"
+		and type(Sync.Shop.Weapons) == "table"
+		and Sync.Shop.Weapons
+		or nil
+	if legacy then
+		for boxId, offer in pairs(legacy) do
+			addOffer(boxId, offer)
+		end
+	end
+	table.sort(rows, function(a, b)
+		return a.Id < b.Id
+	end)
+	local signatureParts = {}
+	for _, row in ipairs(rows) do
+		signatureParts[#signatureParts + 1] = table.concat({
+			row.Id, row.Name, row.Currency, tostring(row.Price), row.Godly,
+		}, "|")
+	end
+	local signature = table.concat(signatureParts, ";")
+	if signature == "" or Runtime.BoxCatalogSignature == signature then
+		return
+	end
+	Runtime.BoxCatalogSignature = signature
+	warn("[Thieu Nang Hub][BOX] Danh sach BoxName dang ban (" .. #rows .. "):")
+	for _, row in ipairs(rows) do
+		warn(string.format(
+			"[Thieu Nang Hub][BOX] BoxName=%q | UI=%s | %s=%s | Godly=%s",
+			row.Id,
+			row.Name,
+			row.Currency,
+			tostring(row.Price),
+			row.Godly
+		))
+	end
+	pushLog("Da dump " .. #rows .. " BoxName dang ban ra console")
 end
 
 -- Battle pass tier: template ProfileData cua event co CurrentTier (Summer2025.lua:59).
@@ -890,9 +1113,12 @@ local function getDailyQuestInfo()
 	if not questConfigs[questName] then
 		questName = nil
 		for id, def in pairs(questConfigs) do
-			if tostring(id):lower():find("daily", 1, true)
-				or (type(def) == "table" and def.Title
-					and tostring(def.Title):lower():find("daily", 1, true)) then
+			local searchText = tostring(id)
+				.. " " .. tostring(type(def) == "table" and def.Title or "")
+			searchText = searchText:lower()
+			-- Khong nham weekly co title kieu "Complete daily quest tiers".
+			if searchText:find("daily", 1, true)
+				and not searchText:find("weekly", 1, true) then
 				questName = id
 				break
 			end
@@ -911,7 +1137,7 @@ local function getDailyQuestInfo()
 	local completedTiers = 0
 	for _, tier in ipairs(config.Quests) do
 		local target = tonumber(tier.ChallengeAmount) or 0
-		finalTarget = target
+		finalTarget = math.max(finalTarget, target)
 		if progress >= target then
 			completedTiers = completedTiers + 1
 		end
@@ -929,109 +1155,170 @@ end
 local function sendWebhook(payload)
 	local url = tostring(CFG.WebhookUrl or "")
 	if url == "" then
-		return false
+		return false, "WebhookUrl dang de trong"
 	end
 	local httpFn = (type(request) == "function" and request)
 		or (type(http_request) == "function" and http_request)
 		or (syn and type(syn.request) == "function" and syn.request)
 		or (http and type(http.request) == "function" and http.request)
 	if not httpFn then
-		return false
+		return false, "executor khong co ham http request"
 	end
 	local okBody, body = pcall(function()
 		return HttpService:JSONEncode(payload)
 	end)
 	if not okBody then
-		return false
+		return false, "khong encode duoc JSON"
 	end
-	return pcall(httpFn, {
+	local okCall, response = pcall(httpFn, {
 		Url = url,
 		Method = "POST",
 		Headers = { ["Content-Type"] = "application/json" },
 		Body = body,
 	})
-end
-
--- Godly Icecream: khop ten (ke ca "IcecreamChroma") va/hoac Rarity Godly trong Sync.
-local function isTargetGodly(itemId)
-	local id = tostring(itemId)
-	local want = tostring(CFG.GodlyItemName or ""):lower()
-	local nameMatch = want ~= "" and id:lower():find(want, 1, true) ~= nil
-	local godly = false
-	if Sync
-		and type(Sync.Weapons) == "table"
-		and type(Sync.Weapons[id]) == "table" then
-		godly = Sync.Weapons[id].Rarity == "Godly"
+	if not okCall then
+		return false, "loi goi HTTP: " .. tostring(response)
 	end
-	return nameMatch, godly
+	if type(response) ~= "table" then
+		return false, "executor khong tra HTTP status"
+	end
+	local status = tonumber(response.StatusCode) or tonumber(response.Status)
+	if status and status >= 200 and status < 300 then
+		return true, "HTTP " .. status
+	end
+	if not status and response.Success == true then
+		return true, "Success=true"
+	end
+	return false, status
+		and ("HTTP " .. status .. " " .. tostring(response.Body or ""):sub(1, 120))
+		or "response khong co HTTP status/Success=true"
 end
 
--- OpenCrate tra ve list {MysteryBoxId, RewardedItemId} (MysteryBoxService).
-local function extractRewardIds(result)
-	local ids = {}
-	if type(result) == "table" then
-		if result.RewardedItemId ~= nil then
-			ids[#ids + 1] = result.RewardedItemId
+-- Detect bat ky Godly nao tu reward that cua box dang chon.
+local function isGodlyReward(itemId)
+	local id = tostring(itemId)
+	local weapon = Sync
+		and type(Sync.Weapons) == "table"
+		and Sync.Weapons[id]
+		or nil
+	return type(weapon) == "table" and weapon.Rarity == "Godly", weapon
+end
+
+local function getWeaponImageUrl(itemId)
+	local _, weapon = isGodlyReward(itemId)
+	local rawImage = type(weapon) == "table" and tostring(weapon.Image or "") or ""
+	local assetId = rawImage:match("rbxassetid://(%d+)")
+		or rawImage:match("[?&]assetId=(%d+)")
+		or rawImage:match("[?&]id=(%d+)")
+	if assetId then
+		return "https://www.roblox.com/Thumbs/Asset.ashx"
+			.. "?format=png&width=420&height=420&assetId=" .. assetId
+	end
+	if rawImage:match("^https?://") then
+		return rawImage:gsub("^http://", "https://")
+	end
+	return ""
+end
+
+-- OpenCrate moi tra mot reward ID; normalize ve format list cua BoxController.
+local function normalizeOpenCrateResult(boxId, result)
+	local rewards = {}
+	local function addReward(rewardId, mysteryBoxId)
+		if rewardId == nil then
+			return
 		end
-		for _, v in pairs(result) do
-			if type(v) == "table" and v.RewardedItemId ~= nil then
-				ids[#ids + 1] = v.RewardedItemId
+		rewards[#rewards + 1] = {
+			MysteryBoxId = tostring(mysteryBoxId or boxId),
+			RewardedItemId = tostring(rewardId),
+		}
+	end
+	if type(result) == "string" or type(result) == "number" then
+		addReward(result, boxId)
+	elseif type(result) == "table" then
+		if result.RewardedItemId ~= nil then
+			addReward(result.RewardedItemId, result.MysteryBoxId)
+		else
+			for _, entry in ipairs(result) do
+				if type(entry) == "table" and entry.RewardedItemId ~= nil then
+					addReward(entry.RewardedItemId, entry.MysteryBoxId)
+				elseif type(entry) == "string" or type(entry) == "number" then
+					addReward(entry, boxId)
+				end
 			end
 		end
-	elseif type(result) == "string" then
-		ids[#ids + 1] = result
 	end
-	return ids
+	return rewards
 end
 
-local function onGodlyIcecream(itemId)
-	if Runtime.GodlyReported then
-		return
-	end
-	Runtime.GodlyReported = true
-	State.GodlyItem = tostring(itemId)
-	-- Doi nen UI den -> XANH LA CAY khi trung godly.
+local function onGodlyReward(itemId, boxInfo)
+	local id = tostring(itemId)
+	local _, weapon = isGodlyReward(id)
+	Runtime.HasGodly = true
+	State.GodlyItem = id
 	if CFG.GodlyGreenUI and Runtime.GuiRefs and Runtime.GuiRefs.Root then
 		pcall(function()
 			Runtime.GuiRefs.Root.BackgroundColor3 = Color3.fromRGB(18, 120, 45)
 		end)
 	end
-	pushLog("GODLY " .. tostring(itemId) .. " -> gui webhook 1 lan")
+	pushLog("GODLY " .. id .. " tu " .. tostring(boxInfo.Name)
+		.. " -> dang gui webhook")
 	task.spawn(function()
-		local id = tostring(itemId)
-		local isChroma = id:lower():find("chroma", 1, true) ~= nil
-		local image = isChroma
-			and tostring(CFG.GodlyChromaImageUrl or "")
-			or tostring(CFG.GodlyImageUrl or "")
+		local isChroma = (type(weapon) == "table" and weapon.Chroma == true)
+			or id:lower():find("chroma", 1, true) ~= nil
+		local image = getWeaponImageUrl(id)
+		local displayName = type(weapon) == "table"
+			and tostring(weapon.ItemName or weapon.Name or id)
+			or id
 		local up = math.max(0, os.clock() - (Runtime.StartTime or os.clock()))
 		local embed = {
-			title = (isChroma and "🌈 TRUNG CHROMA GODLY: " or "🍦 TRUNG GODLY: ") .. id,
-			description = ("**Acc:** %s (@%s)\n**Box:** %s   •   **Box da mo:** %d\n**Thoi gian chay:** %02d:%02d:%02d")
+			title = (isChroma and "TRUNG CHROMA GODLY: " or "TRUNG GODLY: ")
+				.. displayName,
+			description = ("**Acc:** %s (@%s)\n**Box:** %s (`%s`)\n"
+				.. "**Reward ID:** `%s`   |   **Box da mo:** %d\n"
+				.. "**Thoi gian chay:** %02d:%02d:%02d")
 				:format(
 					tostring(LocalPlayer.DisplayName),
 					tostring(LocalPlayer.Name),
-					tostring(CFG.BoxName),
+					tostring(boxInfo.Name),
+					tostring(boxInfo.Id),
+					id,
 					tonumber(Runtime.BoxesOpened) or 0,
 					math.floor(up / 3600),
 					math.floor((up % 3600) / 60),
 					math.floor(up % 60)
 				),
-			-- Mau embed: chroma = hong neon 0xFF4DE8, thuong = xanh ngoc 0x4DE8D0.
 			color = isChroma and 16731624 or 5106896,
-			footer = { text = "Thieu Nang Hub • discord.gg/thieunanghub" },
+			footer = { text = "Thieu Nang Hub | discord.gg/thieunanghub" },
 		}
 		if image ~= "" then
 			embed.thumbnail = { url = image }
 		end
-		sendWebhook({ content = "@everyone", embeds = { embed } })
+		local sent, detail = sendWebhook({
+			content = "@everyone",
+			embeds = { embed },
+		})
+		if not ownsRuntime() then
+			return
+		end
+		if sent then
+			Runtime.GodlyWebhookCount = (Runtime.GodlyWebhookCount or 0) + 1
+			pushLog("Webhook GODLY " .. id .. " thanh cong: " .. tostring(detail))
+		else
+			State.LastError = "Webhook GODLY " .. id .. ": " .. tostring(detail)
+			pushLog(State.LastError)
+		end
 	end)
 end
 
 -- Mua + mo box. OpenCrate la RemoteFunction (YIELD) -> chay trong coroutine rieng,
 -- KHONG goi truc tiep trong scheduler callback (se chan Worker).
 local function doAutoBuyBox()
-	local price = tonumber(CFG.BoxPrice) or math.huge
-	if getShells() < price then
+	local initialInfo, initialError = getSelectedBoxPurchaseInfo()
+	if not initialInfo then
+		State.LastError = "AutoBox: " .. tostring(initialError)
+		return
+	end
+	if initialInfo.Balance < initialInfo.Price then
 		return
 	end
 	local shopFolder = Remotes and Remotes:FindFirstChild("Shop")
@@ -1041,40 +1328,66 @@ local function doAutoBuyBox()
 		return
 	end
 	local boxCtrl = shopFolder:FindFirstChild("BoxController")
-	local currencyKey = resolveCurrencyKey()
-	-- Mua HET so: mua toi da floor(so/gia) box, mo tung cai. Dung ngay khi loi/nil
-	-- (server het so tu choi). Dem = so box mua duoc tai thoi diem nay; so tang them
-	-- sau (weekly reward) se duoc mua o lan AutoBox tiep theo.
-	local count = math.floor(getShells() / price)
+	local crateComplete = shopFolder:FindFirstChild("CrateComplete")
+	local count = math.floor(initialInfo.Balance / initialInfo.Price)
 	for _ = 1, count do
-		if getShells() < price then
+		if not ownsRuntime() then
+			return
+		end
+		local boxInfo, boxError = getSelectedBoxPurchaseInfo()
+		if not boxInfo then
+			State.LastError = "AutoBox: " .. tostring(boxError)
+			break
+		end
+		if boxInfo.Balance < boxInfo.Price then
 			break
 		end
 		local ok, result = pcall(function()
-			return openCrate:InvokeServer(CFG.BoxName, "MysteryBox", currencyKey)
+			return openCrate:InvokeServer(
+				boxInfo.Id,
+				"MysteryBox",
+				boxInfo.Currency
+			)
 		end)
 		if not ok then
 			State.LastError = "OpenCrate: " .. tostring(result)
 			break
 		end
-		if not result then
+		local rewards = normalizeOpenCrateResult(boxInfo.Id, result)
+		if #rewards == 0 then
+			State.LastError = "OpenCrate tra ve payload rong cho " .. boxInfo.Id
 			break
 		end
-		Runtime.BoxesOpened = (Runtime.BoxesOpened or 0) + 1
-		-- Cho game choi animation mo box (khong bat buoc).
-		if boxCtrl then
-			pcall(function()
-				boxCtrl:Fire(CFG.BoxName, result)
-			end)
+		if type(State.LastError) == "string"
+			and (State.LastError:find("^AutoBox:")
+				or State.LastError:find("^OpenCrate")
+				or State.LastError:find("^Khong thay Remotes%.Shop%.OpenCrate")) then
+			State.LastError = nil
 		end
-		for _, id in ipairs(extractRewardIds(result)) do
-			local nameMatch, godly = isTargetGodly(id)
-			if nameMatch then
-				onGodlyIcecream(id)
-			elseif godly then
-				pushLog("Trung godly khac: " .. tostring(id))
+		Runtime.BoxesOpened = (Runtime.BoxesOpened or 0) + #rewards
+		for _, reward in ipairs(rewards) do
+			local godly = isGodlyReward(reward.RewardedItemId)
+			if godly then
+				onGodlyReward(reward.RewardedItemId, boxInfo)
 			end
 		end
+		-- FORMAT MOI trong ShopService: Fire MOT argument la list reward records.
+		local controllerFired = false
+		if boxCtrl then
+			controllerFired = pcall(function()
+				boxCtrl:Fire(rewards)
+			end)
+		end
+		-- Fallback headless neu BindableEvent khong ton tai/khong Fire duoc.
+		if not controllerFired and crateComplete then
+			for _, reward in ipairs(rewards) do
+				pcall(function()
+					crateComplete:FireServer(reward.RewardedItemId)
+				end)
+			end
+		end
+		-- BoxController doi ~3.5-4.5s roi moi CrateComplete; tranh chong box.
+		task.wait(controllerFired and 5 or 0.5)
 	end
 end
 
@@ -1095,6 +1408,10 @@ local function callAutoSwap(option)
 	if key == "" then
 		State.LastError = "AutoSwap: chua co ApiKey"
 		return false, "thieu ApiKey", true
+	end
+	local url = tostring(CFG.AutoSwapUrl or "")
+	if url == "" then
+		return false, "thieu AutoSwapUrl", true
 	end
 	local httpFn = (type(request) == "function" and request)
 		or (type(http_request) == "function" and http_request)
@@ -1117,7 +1434,7 @@ local function callAutoSwap(option)
 		return false, "khong encode duoc JSON", true
 	end
 	local okCall, res = pcall(httpFn, {
-		Url = tostring(CFG.AutoSwapUrl or ""),
+		Url = url,
 		Method = "POST",
 		Headers = {
 			["X-Api-Key"] = key,
@@ -1130,15 +1447,15 @@ local function callAutoSwap(option)
 		return false, "loi goi HTTP: " .. tostring(res), false
 	end
 	if type(res) ~= "table" then
-		-- Executor cu khong tra table -> khong biet duoc, coi nhu OK (nhu ban cu).
-		return true, "da gui (executor khong tra status)", false
+		-- Khong co status thi KHONG the khang dinh "da duoc"; tiep tuc loop 60s.
+		return false, "executor khong tra HTTP status", false
 	end
 	local status = tonumber(res.StatusCode) or tonumber(res.Status)
 	if not status then
 		if res.Success == true then
 			return true, "da gui (Success=true)", false
 		end
-		return true, "da gui (khong doc duoc status)", false
+		return false, "response khong co HTTP status/Success=true", false
 	end
 	if status >= 200 and status < 300 then
 		return true, "HTTP " .. status, false
@@ -4195,17 +4512,36 @@ end, function()
 	return Runtime.LowRenderNeedsRescan and 1 or 3
 end)
 
--- Auto mua + mo box khi du so (OpenCrate yield -> spawn coroutine, guard BoxBusy).
+addTask("BoxCatalog", dumpBoxCatalogIfChanged, function()
+	return 10
+end)
+
+-- Auto mua + mo box khi du currency (OpenCrate yield -> coroutine + BoxBusy).
 addTask("AutoBox", function()
 	if not CFG.AutoBuyBox or Runtime.BoxBusy then
 		return
 	end
-	if getShells() < (tonumber(CFG.BoxPrice) or math.huge) then
+	local boxInfo, boxError = getSelectedBoxPurchaseInfo()
+	if not boxInfo then
+		if Sync and ProfileData then
+			State.LastError = "AutoBox: " .. tostring(boxError)
+		end
+		return
+	end
+	if type(State.LastError) == "string"
+		and State.LastError:find("^AutoBox:") then
+		State.LastError = nil
+	end
+	if boxInfo.Balance < boxInfo.Price then
 		return
 	end
 	Runtime.BoxBusy = true
 	task.spawn(function()
-		pcall(doAutoBuyBox)
+		local ok, err = pcall(doAutoBuyBox)
+		if not ok then
+			State.LastError = "AutoBox worker: " .. tostring(err)
+			pushLog(State.LastError)
+		end
 		Runtime.BoxBusy = false
 	end)
 end, function()
@@ -4247,108 +4583,114 @@ end, function()
 	return 15
 end)
 
--- Auto change acc (logic bipbeo.lua, da fix khong chan scheduler): theo doi quest
--- DAILY. Xong TOAN BO moc daily (Progress >= ChallengeAmount cuoi) VA het so mua
--- box (AutoBox da mua het) -> call autoswap 1 LAN:
---   ra Godly (Icecream) -> option havegodly; khong -> option no godly.
--- KHONG doi BoxesOpened phien nay: acc da xong daily + mo box tu hom truoc, vao
--- lai (phien moi 0 box, 0 so) van doi duoc ngay.
+-- Auto change acc: swap() dung dung thu tu CHECK -> WAIT 60s -> REQUEST.
+-- Mot worker rieng loop swap() vo han; KHONG dat task.wait trong central scheduler.
+local SWAP_INTERVAL_SECONDS = 60
 local lastDailyProgress = -1
-addTask("AutoChangeAcc", function()
+
+local function checkSwapCondition(updateUi)
 	local info = getDailyQuestInfo()
-	if not info then
-		return
+	if updateUi and info then
+		Runtime.DailyQuestProgressText = string.format(
+			"Moc %d/%d (%d/%d)",
+			info.TiersDone,
+			info.TierCount,
+			info.Progress,
+			info.FinalTarget
+		)
+		if info.Progress ~= lastDailyProgress then
+			lastDailyProgress = info.Progress
+			pushLog(string.format(
+				"Daily %s: %s%s",
+				tostring(info.Name),
+				Runtime.DailyQuestProgressText,
+				info.Progress >= info.FinalTarget
+					and " -> XONG HET (het luot hom nay)"
+					or " -> van con lam duoc"
+			))
+		end
 	end
-	-- Cap nhat tien do cho GUI + log khi progress doi (khong spam).
-	Runtime.DailyQuestProgressText = string.format(
-		"Moc %d/%d (%d/%d)",
-		info.TiersDone, info.TierCount, info.Progress, info.FinalTarget
-	)
-	if info.Progress ~= lastDailyProgress then
-		lastDailyProgress = info.Progress
-		pushLog(string.format(
-			"Daily %s: %s%s",
-			tostring(info.Name),
-			Runtime.DailyQuestProgressText,
-			info.Progress >= info.FinalTarget
-				and " -> XONG HET (het luot hom nay)"
-				or " -> van con lam duoc"
-		))
+	if not CFG.AutoChangeAcc
+		or Runtime.SwapSucceeded
+		or not info
+		or info.FinalTarget <= 0
+		or info.Progress < info.FinalTarget
+		or Runtime.BoxBusy then
+		return false
 	end
-	if not CFG.AutoChangeAcc or Runtime.SwapCalled then
-		return
+	local boxInfo, boxError = getSelectedBoxPurchaseInfo()
+	if not boxInfo then
+		if updateUi and Runtime.LastSwapConditionError ~= boxError then
+			Runtime.LastSwapConditionError = boxError
+			State.LastError = "AutoSwap: " .. tostring(boxError)
+			pushLog(State.LastError)
+		end
+		return false
 	end
-	-- Dang trong thoi gian nghi giua 2 chu ky retry (API ben cung cap dang lag).
-	if os.clock() < (Runtime.SwapRetryAfter or 0) then
-		return
+	if Runtime.LastSwapConditionError
+		and State.LastError == "AutoSwap: "
+			.. tostring(Runtime.LastSwapConditionError) then
+		State.LastError = nil
 	end
-	-- Chua xong het moc daily -> chua doi (acc con luot lam nhiem vu hom nay).
-	if info.FinalTarget <= 0 or info.Progress < info.FinalTarget then
-		return
+	Runtime.LastSwapConditionError = nil
+	-- Con du currency mua box -> AutoBox phai tieu het truoc khi doi acc.
+	if boxInfo.Balance >= boxInfo.Price then
+		return false
 	end
-	-- Con so >= gia box -> de AutoBox mua + mo HET truoc roi moi doi.
-	if getShells() >= (tonumber(CFG.BoxPrice) or math.huge) then
-		return
+	return true
+end
+
+local function swap()
+	local eligible = checkSwapCondition(true)
+	if eligible then
+		pushLog("DU DIEU KIEN doi acc -> doi " .. SWAP_INTERVAL_SECONDS
+			.. "s roi request autoswap")
 	end
-	Runtime.SwapCalled = true
-	Runtime.SwapCycles = (Runtime.SwapCycles or 0) + 1
-	local cycle = Runtime.SwapCycles
-	local option = Runtime.GodlyReported
+
+	-- WAIT nam BEN TRONG swap() dung theo flow check -> wait -> request.
+	task.wait(SWAP_INTERVAL_SECONDS)
+
+	if not ownsRuntime()
+		or Runtime.SwapSucceeded
+		or not eligible
+		or not checkSwapCondition(false) then
+		return false
+	end
+	-- Tinh option sat luc request de bat Godly vua mo trong 60s cho.
+	local option = Runtime.HasGodly
 		and CFG.AutoSwapOptionHaveGodly
 		or CFG.AutoSwapOptionNoGodly
-	-- SwapCalled=true TRUOC khi cho -> task check khong ban trung lan 2 trong luc doi.
-	local swapDelay = math.max(0, tonumber(CFG.AutoSwapDelaySeconds) or 10)
-	pushLog("DU DIEU KIEN doi acc (xong daily + het so) -> cho "
-		.. swapDelay .. "s roi call autoswap"
-		.. (cycle > 1 and (" (chu ky " .. cycle .. ")") or ""))
-	task.spawn(function()
-		task.wait(swapDelay) -- cho server luu/on dinh truoc khi doi acc
-		if not ownsRuntime() then
-			return
+	Runtime.SwapAttempts = (Runtime.SwapAttempts or 0) + 1
+	local ok, detail, fatal = callAutoSwap(option)
+	if ok then
+		Runtime.SwapSucceeded = true
+		if type(State.LastError) == "string"
+			and State.LastError:find("^AutoSwap:") then
+			State.LastError = nil
 		end
-		-- BACKUP CHO API LAG: gui lai nhieu lan, cach nhau tang dan (20s, 40s...).
-		-- Dung ngay khi server NHAN THAT (HTTP 2xx) hoac gap loi khong the retry
-		-- (sai ApiKey / sai rule 4xx / executor khong co ham http).
-		local maxTries = math.max(1,
-			math.floor(tonumber(CFG.AutoSwapMaxRetries) or 5))
-		local retryDelay = math.max(5,
-			tonumber(CFG.AutoSwapRetryDelaySeconds) or 20)
-		for attempt = 1, maxTries do
-			if not ownsRuntime() then
-				return
-			end
-			local ok, detail, fatal = callAutoSwap(option)
-			if ok then
-				pushLog("AUTOSWAP option " .. tostring(option)
-					.. " THANH CONG (lan " .. attempt .. "): " .. tostring(detail))
-				return
-			end
-			State.LastError = "AutoSwap: " .. tostring(detail)
-			pushLog("AUTOSWAP FAIL lan " .. attempt .. "/" .. maxTries
-				.. ": " .. tostring(detail))
-			if fatal then
-				pushLog("AUTOSWAP loi KHONG THE retry -> dung (kiem tra ApiKey/rule)")
-				return
-			end
-			if attempt < maxTries then
-				task.wait(retryDelay * attempt) -- backoff tang dan
-			end
+		pushLog("AUTOSWAP option " .. tostring(option)
+			.. " THANH CONG (lan " .. Runtime.SwapAttempts
+			.. "): " .. tostring(detail))
+		return true
+	end
+	State.LastError = "AutoSwap: " .. tostring(detail)
+	pushLog("AUTOSWAP FAIL lan " .. Runtime.SwapAttempts
+		.. ": " .. tostring(detail)
+		.. (fatal and " [fatal, van retry 60s]" or ""))
+	return false
+end
+
+Runtime.SwapWorker = task.spawn(function()
+	while ownsRuntime() and not Runtime.SwapSucceeded do
+		local ok, result = pcall(swap)
+		if not ok then
+			State.LastError = "AutoSwap worker: " .. tostring(result)
+			pushLog(State.LastError)
+			task.wait(SWAP_INTERVAL_SECONDS)
+		elseif result then
+			break
 		end
-		-- Het luot chu ky nay -> MO KHOA de task check tu lam lai ca chu ky sau
-		-- AutoSwapRetryCycleSeconds (dieu kien doi acc van con dung).
-		local cycleWait = tonumber(CFG.AutoSwapRetryCycleSeconds) or 180
-		if cycleWait > 0 then
-			Runtime.SwapRetryAfter = os.clock() + cycleWait
-			Runtime.SwapCalled = false
-			pushLog("AUTOSWAP het " .. maxTries .. " lan van fail -> nghi "
-				.. cycleWait .. "s roi tu thu lai chu ky moi")
-		else
-			pushLog("AUTOSWAP het " .. maxTries .. " lan van fail -> dung"
-				.. " (AutoSwapRetryCycleSeconds = 0)")
-		end
-	end)
-end, function()
-	return 10
+	end
 end)
 
 --====================================================================
@@ -4381,7 +4723,9 @@ local function createGui()
 	root.Name = "Root"
 	root.Position = UDim2.new(0, 0, 0, 0)
 	root.Size = UDim2.new(1, 0, 1, 0)
-	root.BackgroundColor3 = Color3.fromRGB(12, 8, 20)
+	root.BackgroundColor3 = CFG.GodlyGreenUI and Runtime.HasGodly
+		and Color3.fromRGB(18, 120, 45)
+		or Color3.fromRGB(12, 8, 20)
 	root.BackgroundTransparency = 0
 	root.BorderSizePixel = 0
 	root.Parent = gui
@@ -4598,9 +4942,14 @@ local function refreshGui()
 	refs.Coin.Text = "💰  Coin: " .. tostring(State.Collected)
 		.. "   •   con: " .. tostring(State.CoinsLeft)
 		.. "   •   tong: " .. tostring(Runtime.TotalCoinsEarned or 0)
-	refs.Shell.Text = "🌊  Shells: " .. tostring(getShells())
-		.. "/" .. tostring(CFG.BoxPrice)
-		.. "   |   📦 Box: " .. tostring(Runtime.BoxesOpened or 0)
+	local boxInfo, boxError = getSelectedBoxPurchaseInfo()
+	refs.Shell.Text = boxInfo
+		and ("📦  " .. boxInfo.Name .. " (" .. boxInfo.Id .. "): "
+			.. tostring(boxInfo.Balance) .. "/" .. tostring(boxInfo.Price)
+			.. " " .. boxInfo.Currency)
+		or ("📦  " .. tostring(CFG.BoxName) .. ": " .. tostring(boxError or "dang doc..."))
+	refs.Shell.Text = refs.Shell.Text
+		.. "   |   Da mo: " .. tostring(Runtime.BoxesOpened or 0)
 		.. (State.GodlyItem and ("   •   ✨ GODLY: " .. tostring(State.GodlyItem)) or "")
 	local tier = getBattlePassTier()
 	local shopCoins = getShopCoins()
